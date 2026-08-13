@@ -57,8 +57,13 @@ USE_PLAYWRIGHT = os.getenv("USE_PLAYWRIGHT", "false").lower() in {"1", "true", "
 # --------------------------------------------------------------------------- #
 # WhatsApp delivery
 # --------------------------------------------------------------------------- #
-# "callmebot" (recommended, free forever) or "twilio" (free sandbox trial)
-WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "callmebot").lower()
+# "telegram" (most reliable & free), "callmebot" (free WhatsApp, capacity-limited),
+# or "twilio" (WhatsApp sandbox, needs re-joining every 72h)
+WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "telegram").lower()
+
+# Telegram Bot API
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # CallMeBot
 CALLMEBOT_PHONE = os.getenv("CALLMEBOT_PHONE", "")   # e.g. +919876543210

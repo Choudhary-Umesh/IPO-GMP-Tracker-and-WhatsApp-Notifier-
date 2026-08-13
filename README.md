@@ -78,15 +78,35 @@ Company Name: Delta Pharma Ltd
 
 # 🚀 Setup guide (start to finish, ~20 minutes)
 
-## Part 1 — Get a free WhatsApp channel (CallMeBot)
+## Part 1 — Set up your notification channel
+
+Pick ONE. Telegram is the default because it never fails to register; CallMeBot
+delivers to WhatsApp but has a hard capacity limit on new signups.
+
+### Option A — Telegram (recommended, always available)
+
+1. In Telegram, message **@BotFather** → `/newbot` → pick a name and a username
+   ending in `bot`. He replies with a token like `123456789:AAE...`.
+2. Open a chat with your new bot and send it any message (this is required — bots
+   cannot message you first).
+3. Get your chat ID: open in a browser
+   `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and read `"chat":{"id":123456789`.
+   Or just message **@userinfobot**, which replies with your ID.
+4. Secrets to add later: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+   Set the repo variable `WHATSAPP_PROVIDER` to `telegram` (this is the default).
+
+### Option B — WhatsApp via CallMeBot
 
 CallMeBot is free forever for personal use, needs no credit card, and — unlike the
 Twilio sandbox — does not expire every 72 hours. It can only message **your own
 number**, which is exactly what you need.
 
+**Availability caveat:** CallMeBot caps how many people can register. When their
+bot is full the setup page masks the phone number entirely and no new signups are
+possible until slots free up. Check the page before relying on this route.
+
 1. Open <https://www.callmebot.com/blog/free-api-whatsapp-messages/> and copy the
-   bot's phone number shown there. At the time of writing it is **+34 613 01 49 37**;
-   always trust the number on the page over this README, as they rotate it.
+   bot's phone number shown there. They rotate it, so always trust the page.
 2. Save that number in your phone contacts (any name).
 3. From WhatsApp, send it exactly: `I allow callmebot to send me messages`
 4. Within ~2 minutes the bot replies: `API Activated for your phone number. Your APIKEY is 1234567`.
@@ -121,8 +141,10 @@ Repo → **Settings** → **Secrets and variables** → **Actions** → **New re
 
 | Secret name        | Value                        |
 |--------------------|------------------------------|
-| `CALLMEBOT_PHONE`  | `+919876543210` (your number) |
-| `CALLMEBOT_APIKEY` | the 7-digit key from step 1.4 |
+| `TELEGRAM_BOT_TOKEN` | the BotFather token (Option A) |
+| `TELEGRAM_CHAT_ID`   | your numeric chat ID (Option A) |
+| `CALLMEBOT_PHONE`    | `+919876543210` — only for Option B |
+| `CALLMEBOT_APIKEY`   | the 7-digit key — only for Option B |
 
 Optional, under the **Variables** tab (not secrets — these aren't sensitive):
 
@@ -131,6 +153,7 @@ Optional, under the **Variables** tab (not secrets — these aren't sensitive):
 | `MIN_GMP_PCT`     | `15`    | GMP % threshold                            |
 | `FUZZY_THRESHOLD` | `80`    | name-match strictness (0-100)              |
 | `SEND_WHEN_EMPTY` | `true`  | send a "nothing today" heartbeat message   |
+| `WHATSAPP_PROVIDER` | `telegram` | `telegram`, `callmebot` or `twilio`    |
 
 ## Part 4 — Test it immediately (don't wait for tomorrow)
 

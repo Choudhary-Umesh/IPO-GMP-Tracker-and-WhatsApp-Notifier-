@@ -6,3 +6,4 @@ venv/
 *.db
 debug/
 .DS_Store
+.DS_Store

@@ -1,9 +1,11 @@
 """STEP 3 — Dispatch.
 
-Two free providers are supported:
+Three free providers are supported:
 
-  callmebot  (default, recommended)  Free forever, no card, no expiry. You send
-             one WhatsApp message to their bot once to get a personal API key.
+  telegram   (default) Free, unlimited, instant, never at capacity. Create a bot
+             with @BotFather and you own the channel outright.
+  callmebot  Free WhatsApp, no card. Capacity-limited: when their bot is full the
+             activation number is hidden and you cannot register until slots free up.
   twilio     Free trial credit + WhatsApp Sandbox. Note the sandbox connection
              expires every 72 hours unless you re-send the join code, which
              makes it a poor fit for unattended daily automation.
@@ -23,6 +25,8 @@ import requests
 from .config import (
     CALLMEBOT_APIKEY,
     CALLMEBOT_PHONE,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHAT_ID,
     HTTP_TIMEOUT,
     MAX_MESSAGE_CHARS,
     TWILIO_ACCOUNT_SID,
@@ -107,7 +111,31 @@ def _send_twilio(text: str) -> None:
     log.info("Twilio accepted the message (SID %s)", resp.json().get("sid"))
 
 
-_PROVIDERS = {"callmebot": _send_callmebot, "twilio": _send_twilio}
+def _send_telegram(text: str) -> None:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        raise NotifierError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must both be set")
+
+    resp = requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "disable_web_page_preview": True,
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    if resp.status_code != 200 or not resp.json().get("ok"):
+        raise NotifierError(
+            f"Telegram rejected the message (HTTP {resp.status_code}): {resp.text[:300]}"
+        )
+    log.info("Telegram accepted the message")
+
+
+_PROVIDERS = {
+    "telegram": _send_telegram,
+    "callmebot": _send_callmebot,
+    "twilio": _send_twilio,
+}
 
 
 # --------------------------------------------------------------------------- #
