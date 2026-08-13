@@ -52,7 +52,12 @@ USER_AGENT = os.getenv(
 )
 
 # Set USE_PLAYWRIGHT=true only if a site starts rendering its table via JS.
+# InvestorGain needs this; IPO Watch does not (and hangs a headless browser
+# because its ad scripts never go idle), so it has its own opt-in flag.
 USE_PLAYWRIGHT = os.getenv("USE_PLAYWRIGHT", "false").lower() in {"1", "true", "yes"}
+IPOWATCH_USE_PLAYWRIGHT = os.getenv("IPOWATCH_USE_PLAYWRIGHT", "false").lower() in {
+    "1", "true", "yes"
+}
 
 # --------------------------------------------------------------------------- #
 # WhatsApp delivery

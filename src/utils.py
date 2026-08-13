@@ -70,10 +70,12 @@ def http_get(url: str, *, headers: Optional[dict] = None, retries: int = HTTP_RE
     raise RuntimeError(f"Could not fetch {url} after {retries} attempts") from last_error
 
 
-def fetch_html(url: str) -> str:
-    """Fetch a page. Falls back to a headless browser when USE_PLAYWRIGHT=true,
-    which is only needed if a source switches to client-side table rendering."""
-    if not USE_PLAYWRIGHT:
+def fetch_html(url: str, *, use_browser: Optional[bool] = None) -> str:
+    """Fetch a page. `use_browser` overrides the global USE_PLAYWRIGHT flag, so a
+    site that renders fine with plain HTTP is never routed through Chromium."""
+    if use_browser is None:
+        use_browser = USE_PLAYWRIGHT
+    if not use_browser:
         return http_get(url)
 
     from playwright.sync_api import sync_playwright  # imported lazily
@@ -82,7 +84,14 @@ def fetch_html(url: str) -> str:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(user_agent=USER_AGENT)
-        page.goto(url, wait_until="networkidle", timeout=60_000)
+        # "networkidle" never fires on pages with ads/analytics that poll forever,
+        # so wait for the DOM and then for an actual table to appear instead.
+        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        try:
+            page.wait_for_selector("table tbody tr", timeout=20_000)
+        except Exception:  # noqa: BLE001 - fall through and parse whatever loaded
+            log.warning("No table row appeared within 20s; parsing current DOM")
+        page.wait_for_timeout(1_500)  # let any final rows render
         html = page.content()
         browser.close()
     return html

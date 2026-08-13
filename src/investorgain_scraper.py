@@ -34,14 +34,16 @@ from .utils import (
 
 log = logging.getLogger(__name__)
 
-# Header keyword -> logical field. Matched as a substring of the lower-cased header.
-_COLUMN_HINTS: dict[str, tuple[str, ...]] = {
-    "name": ("ipo", "company"),
-    "price": ("price", "band"),
-    "gmp": ("gmp", "premium"),
-    "est_listing": ("est listing", "estimated", "listing gain"),
-    "close": ("close", "closing"),
-    "open": ("open",),
+# Header keyword -> logical field, matched as a substring of the lower-cased header.
+# The second tuple is anti-hints: a header containing any of them is rejected for
+# that field. This exists because "IPO Size" would otherwise claim the name column.
+_COLUMN_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "name": (("name", "company", "ipo"), ("size", "lot", "price", "gmp", "date")),
+    "price": (("price", "band"), ("size",)),
+    "gmp": (("gmp", "premium"), ("updated", "date")),
+    "est_listing": (("est listing", "estimated", "listing gain"), ()),
+    "close": (("close", "closing"), ()),
+    "open": (("open", "opening"), ()),
 }
 
 
@@ -71,9 +73,11 @@ def _map_columns(table) -> dict[str, int]:
 
     headers = [_cell_text(c).lower() for c in header_cells]
     mapping: dict[str, int] = {}
-    for field, hints in _COLUMN_HINTS.items():
+    for field, (hints, anti) in _COLUMN_HINTS.items():
         for idx, header in enumerate(headers):
             if idx in mapping.values():
+                continue
+            if any(bad in header for bad in anti):
                 continue
             if any(hint in header for hint in hints):
                 mapping[field] = idx
@@ -115,6 +119,7 @@ def _parse_row(cells: list[str], cols: dict[str, int]) -> Optional[dict[str, Any
         "raw_price": col("price"),
         "raw_gmp": col("gmp"),
         "raw_close": col("close"),
+        "raw_open": col("open"),
         "raw_est_listing": col("est_listing"),
     }
 

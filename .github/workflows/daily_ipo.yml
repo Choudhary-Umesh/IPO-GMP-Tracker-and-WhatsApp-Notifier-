@@ -36,6 +36,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install headless Chromium (only when USE_PLAYWRIGHT is true)
+        if: vars.USE_PLAYWRIGHT == 'true'
+        run: python -m playwright install --with-deps chromium
+
       - name: Show run time in IST
         run: TZ=Asia/Kolkata date
 
@@ -50,6 +54,7 @@ jobs:
           TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_FROM:        ${{ secrets.TWILIO_FROM }}
           TWILIO_TO:          ${{ secrets.TWILIO_TO }}
+          USE_PLAYWRIGHT:     ${{ vars.USE_PLAYWRIGHT || 'false' }}
           MIN_GMP_PCT:        ${{ vars.MIN_GMP_PCT || '15' }}
           FUZZY_THRESHOLD:    ${{ vars.FUZZY_THRESHOLD || '80' }}
           SEND_WHEN_EMPTY:    ${{ vars.SEND_WHEN_EMPTY || 'true' }}

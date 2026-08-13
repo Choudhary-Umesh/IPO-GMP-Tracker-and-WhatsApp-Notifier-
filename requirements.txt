@@ -11,5 +11,5 @@ rapidfuzz==3.9.7
 # --- Local development only (GitHub Actions injects real env vars) ------
 python-dotenv==1.0.1
 
-# --- OPTIONAL: uncomment only if a source switches to JS-rendered tables
-# playwright==1.47.0
+# --- Headless browser fallback (used when USE_PLAYWRIGHT=true) ---
+playwright==1.47.0

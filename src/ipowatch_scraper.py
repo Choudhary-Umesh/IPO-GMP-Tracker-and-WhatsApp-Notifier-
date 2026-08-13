@@ -16,7 +16,7 @@ from typing import Any, Optional
 from bs4 import BeautifulSoup
 
 from . import db
-from .config import FUZZY_THRESHOLD, IPOWATCH_URL
+from .config import FUZZY_THRESHOLD, IPOWATCH_URL, IPOWATCH_USE_PLAYWRIGHT
 from .utils import (
     clean_display_name,
     compute_gmp_pct,
@@ -180,7 +180,9 @@ def run(*, persist: bool = True) -> list[dict[str, Any]]:
         return []
 
     log.info("Cross-validating %s candidate(s) using %s", len(candidates), _MATCHER)
-    html = fetch_html(IPOWATCH_URL)
+    # IPO Watch is server-rendered plain HTML. It is also ad-heavy, which makes a
+    # headless browser hang, so it always uses plain HTTP regardless of USE_PLAYWRIGHT.
+    html = fetch_html(IPOWATCH_URL, use_browser=IPOWATCH_USE_PLAYWRIGHT)
     entries = parse_entries(html)
     if not entries:
         dump_debug_html("ipowatch_empty", html)

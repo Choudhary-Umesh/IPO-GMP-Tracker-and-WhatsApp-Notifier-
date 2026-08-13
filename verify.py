@@ -28,6 +28,7 @@ from src.config import (
     FUZZY_THRESHOLD,
     INVESTORGAIN_URL,
     IPOWATCH_URL,
+    IPOWATCH_USE_PLAYWRIGHT,
     MIN_GMP_PCT,
 )
 from src.formatter import build_message
@@ -62,7 +63,8 @@ def num(value: Optional[float]) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def load_html(name: str, url: str, *, offline: bool, save: bool) -> str:
+def load_html(name: str, url: str, *, offline: bool, save: bool,
+              use_browser: Optional[bool] = None) -> str:
     path = DEBUG_DIR / f"{name}.html"
     if offline:
         if not path.exists():
@@ -70,7 +72,7 @@ def load_html(name: str, url: str, *, offline: bool, save: bool) -> str:
         print(f"{DIM}Reading saved HTML from {path}{RESET}")
         return path.read_text(encoding="utf-8")
 
-    html = fetch_html(url)
+    html = fetch_html(url, use_browser=use_browser)
     print(f"{DIM}Fetched {len(html):,} bytes from {url}{RESET}")
     if save:
         DEBUG_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,8 +151,8 @@ def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
 
     title(f"2. INVESTORGAIN — all {len(rows)} rows (raw text → extracted value)")
     print(
-        f"{'Company':<30}{'Price cell':<16}{'→Used':<8}"
-        f"{'GMP cell':<12}{'→Used':<8}{'GMP%':<8}{'Close cell':<12}{'→Parsed':<11}Verdict"
+        f"{'Company':<30}{'Price':<8}{'GMP':<8}{'GMP%':<8}"
+        f"{'Open cell':<12}{'Close cell':<12}{'→Parsed close':<15}Verdict"
     )
     print(hr())
 
@@ -159,10 +161,10 @@ def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
         parsed_close = row["close_date"].strftime("%d-%b-%y") if row["close_date"] else "FAIL"
         print(
             f"{colour}{cut(row['name'], 29):<30}"
-            f"{cut(row['raw_price'], 15):<16}{num(row['issue_price']):<8}"
-            f"{cut(row['raw_gmp'], 11):<12}{num(row['ig_gmp']):<8}"
+            f"{num(row['issue_price']):<8}{num(row['ig_gmp']):<8}"
             f"{num(row['ig_gmp_pct']):<8}"
-            f"{cut(row['raw_close'], 11):<12}{parsed_close:<11}{note}{RESET}"
+            f"{cut(row.get('raw_open'), 11):<12}{cut(row['raw_close'], 11):<12}"
+            f"{parsed_close:<15}{note}{RESET}"
         )
 
     selected = ig.filter_rows(rows, target_date=target)
@@ -173,8 +175,8 @@ def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
           f"{GREEN}Selected (GMP% > {MIN_GMP_PCT:.0f}): {len(selected)}{RESET}")
 
     print(f"\n{BOLD}CHECK:{RESET}")
-    print("  • Row count matches the number of IPOs listed on the website")
-    print("  • '→Used' price is the UPPER end of each band (the cap price)")
+    print("  • Company names are real names, not deal sizes or dates")
+    print("  • The Open and Close cells are NOT swapped — compare to the website")
     print("  • GMP% ≈ the gain % the site itself shows in Est. Listing")
     print("  • No 'FAIL' in the →Parsed close column")
     return rows
@@ -276,7 +278,8 @@ def main() -> int:
                   ["name", "raw_price", "issue_price", "raw_gmp", "ig_gmp",
                    "ig_gmp_pct", "raw_close", "close_date"])
 
-    iw_html = load_html("ipowatch", IPOWATCH_URL, offline=args.offline, save=args.save)
+    iw_html = load_html("ipowatch", IPOWATCH_URL, offline=args.offline, save=args.save,
+                        use_browser=IPOWATCH_USE_PLAYWRIGHT)
     entries = audit_ipowatch(iw_html, selected)
     if args.save:
         write_csv("ipowatch", entries,
