@@ -1,0 +1,65 @@
+name: Daily IPO WhatsApp Alert
+
+on:
+  schedule:
+    # GitHub cron is ALWAYS in UTC. IST = UTC + 5:30.
+    # 08:00 UTC = 13:30 IST. We deliberately fire 30 min early because
+    # GitHub's shared scheduler routinely delays cron jobs by 5-20 minutes
+    # (occasionally more at the top of the hour), and you want the message
+    # in hand BEFORE 14:00 IST.
+    - cron: "0 8 * * 1-5"     # Mon-Fri; use "0 8 * * *" for all 7 days
+  workflow_dispatch:          # lets you run it manually from the Actions tab
+
+# Prevent two runs (e.g. cron + manual) colliding.
+concurrency:
+  group: daily-ipo
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Scrape GMP data and send WhatsApp
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Show run time in IST
+        run: TZ=Asia/Kolkata date
+
+      - name: Run IPO pipeline
+        env:
+          WHATSAPP_PROVIDER: ${{ secrets.WHATSAPP_PROVIDER || 'callmebot' }}
+          CALLMEBOT_PHONE:   ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_APIKEY:  ${{ secrets.CALLMEBOT_APIKEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM:        ${{ secrets.TWILIO_FROM }}
+          TWILIO_TO:          ${{ secrets.TWILIO_TO }}
+          MIN_GMP_PCT:        ${{ vars.MIN_GMP_PCT || '15' }}
+          FUZZY_THRESHOLD:    ${{ vars.FUZZY_THRESHOLD || '80' }}
+          SEND_WHEN_EMPTY:    ${{ vars.SEND_WHEN_EMPTY || 'true' }}
+        run: python main.py
+
+      - name: Upload debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-html-${{ github.run_id }}
+          path: |
+            debug/
+            *.db
+          retention-days: 5
+          if-no-files-found: ignore

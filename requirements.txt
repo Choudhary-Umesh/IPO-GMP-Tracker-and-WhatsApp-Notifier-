@@ -1,0 +1,15 @@
+# --- HTTP + HTML parsing -----------------------------------------------
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# --- Fuzzy company-name matching ---------------------------------------
+# Pure-wheel, no C compiler needed (unlike fuzzywuzzy + python-Levenshtein).
+# If this is ever unavailable, src/ipowatch_scraper.py falls back to difflib.
+rapidfuzz==3.9.7
+
+# --- Local development only (GitHub Actions injects real env vars) ------
+python-dotenv==1.0.1
+
+# --- OPTIONAL: uncomment only if a source switches to JS-rendered tables
+# playwright==1.47.0
