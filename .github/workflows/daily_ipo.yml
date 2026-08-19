@@ -47,15 +47,13 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-chromium
 
+      # NOTE: deliberately NO "--with-deps". That flag runs apt-get, and when
+      # GitHub's Ubuntu mirrors are slow it can hang for 10+ minutes. The runner
+      # image already ships the shared libraries Chromium needs.
       - name: Install headless Chromium (only when USE_PLAYWRIGHT is true)
-        if: vars.USE_PLAYWRIGHT == 'true'
-        timeout-minutes: 6
-        run: |
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
-            python -m playwright install-deps chromium
-          else
-            python -m playwright install --with-deps chromium
-          fi
+        if: vars.USE_PLAYWRIGHT == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        run: python -m playwright install chromium
 
       - name: Show run time in IST
         run: TZ=Asia/Kolkata date
