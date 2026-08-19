@@ -19,7 +19,7 @@ jobs:
   notify:
     name: Scrape GMP data and send WhatsApp
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -32,36 +32,18 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        timeout-minutes: 5
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Chromium is ~150MB and its apt dependencies are slow to install, so the
-      # whole browser directory is cached between runs.
-      - name: Cache Playwright browsers
-        if: vars.USE_PLAYWRIGHT == 'true'
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium
-
       - name: Install headless Chromium (only when USE_PLAYWRIGHT is true)
         if: vars.USE_PLAYWRIGHT == 'true'
-        timeout-minutes: 6
-        run: |
-          if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
-            python -m playwright install-deps chromium
-          else
-            python -m playwright install --with-deps chromium
-          fi
+        run: python -m playwright install --with-deps chromium
 
       - name: Show run time in IST
         run: TZ=Asia/Kolkata date
 
       - name: Run IPO pipeline
-        timeout-minutes: 6
         env:
           WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER || 'telegram' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
