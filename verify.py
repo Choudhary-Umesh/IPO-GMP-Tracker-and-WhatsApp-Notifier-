@@ -29,7 +29,8 @@ from src.config import (
     INVESTORGAIN_URL,
     IPOWATCH_URL,
     IPOWATCH_USE_PLAYWRIGHT,
-    MIN_GMP_PCT,
+    MIN_GMP_PCT_MAINBOARD,
+    MIN_GMP_PCT_SME,
 )
 from src.formatter import build_message
 from src.utils import fetch_html, today_ist
@@ -138,12 +139,13 @@ def verdict(row: dict[str, Any], target: dt.date) -> tuple[str, str]:
         return RED, "date unparsed"
     if row["close_date"] != target:
         return DIM, f"closes {row['close_date'].strftime('%d-%b')}"
+    limit = ig.threshold_for(row.get("exchange"))
     pct = row.get("ig_gmp_pct")
     if pct is None:
         return RED, "no GMP%"
-    if pct <= MIN_GMP_PCT:
-        return YELLOW, f"GMP {pct:.1f}% ≤ {MIN_GMP_PCT:.0f}%"
-    return GREEN, "✅ SELECTED"
+    if pct <= limit:
+        return YELLOW, f"GMP {pct:.1f}% ≤ {limit:.0f}% ({row.get('exchange')})"
+    return GREEN, f"✅ SELECTED (> {limit:.0f}%)"
 
 
 def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
@@ -151,8 +153,8 @@ def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
 
     title(f"2. INVESTORGAIN — all {len(rows)} rows (raw text → extracted value)")
     print(
-        f"{'Company':<30}{'Price':<8}{'GMP':<8}{'GMP%':<8}"
-        f"{'Open cell':<12}{'Close cell':<12}{'→Parsed close':<15}Verdict"
+        f"{'Company':<28}{'Type':<11}{'Price':<8}{'GMP':<8}{'GMP%':<8}"
+        f"{'Open':<10}{'Close':<10}{'→Parsed':<12}Verdict"
     )
     print(hr())
 
@@ -160,22 +162,27 @@ def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
         colour, note = verdict(row, target)
         parsed_close = row["close_date"].strftime("%d-%b-%y") if row["close_date"] else "FAIL"
         print(
-            f"{colour}{cut(row['name'], 29):<30}"
+            f"{colour}{cut(row['name'], 27):<28}"
+            f"{cut(row.get('exchange'), 10):<11}"
             f"{num(row['issue_price']):<8}{num(row['ig_gmp']):<8}"
             f"{num(row['ig_gmp_pct']):<8}"
-            f"{cut(row.get('raw_open'), 11):<12}{cut(row['raw_close'], 11):<12}"
-            f"{parsed_close:<15}{note}{RESET}"
+            f"{cut(row.get('raw_open'), 9):<10}{cut(row['raw_close'], 9):<10}"
+            f"{parsed_close:<12}{note}{RESET}"
         )
 
     selected = ig.filter_rows(rows, target_date=target)
     print(hr())
     print(f"Today (IST target date): {BOLD}{target.strftime('%d-%b-%Y')}{RESET}")
+    sme = sum(1 for r in selected if (r.get("exchange") or "") == "SME")
+    print(f"Thresholds: {BOLD}SME > {MIN_GMP_PCT_SME:.0f}%{RESET}, "
+          f"{BOLD}Mainboard > {MIN_GMP_PCT_MAINBOARD:.0f}%{RESET}")
     print(f"Rows parsed: {len(rows)}   Closing today: "
           f"{sum(1 for r in rows if r['close_date'] == target)}   "
-          f"{GREEN}Selected (GMP% > {MIN_GMP_PCT:.0f}): {len(selected)}{RESET}")
+          f"{GREEN}Selected: {len(selected)} ({sme} SME, {len(selected) - sme} Mainboard){RESET}")
 
     print(f"\n{BOLD}CHECK:{RESET}")
-    print("  • Company names are real names, not deal sizes or dates")
+    print("  • The Type column says SME for SME/BSE-SME/NSE-SME rows only")
+    print("  • Company names are clean, with no trailing 'IPO O' badge")
     print("  • The Open and Close cells are NOT swapped — compare to the website")
     print("  • GMP% ≈ the gain % the site itself shows in Est. Listing")
     print("  • No 'FAIL' in the →Parsed close column")

@@ -71,7 +71,8 @@ jobs:
           TWILIO_FROM:        ${{ secrets.TWILIO_FROM }}
           TWILIO_TO:          ${{ secrets.TWILIO_TO }}
           USE_PLAYWRIGHT:     ${{ vars.USE_PLAYWRIGHT || 'false' }}
-          MIN_GMP_PCT:        ${{ vars.MIN_GMP_PCT || '15' }}
+          MIN_GMP_PCT_SME:       ${{ vars.MIN_GMP_PCT_SME || '40' }}
+          MIN_GMP_PCT_MAINBOARD: ${{ vars.MIN_GMP_PCT_MAINBOARD || '15' }}
           FUZZY_THRESHOLD:    ${{ vars.FUZZY_THRESHOLD || '80' }}
           SEND_WHEN_EMPTY:    ${{ vars.SEND_WHEN_EMPTY || 'true' }}
         run: python main.py

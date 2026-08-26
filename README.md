@@ -150,7 +150,8 @@ Optional, under the **Variables** tab (not secrets — these aren't sensitive):
 
 | Variable          | Default | Meaning                                   |
 |-------------------|---------|-------------------------------------------|
-| `MIN_GMP_PCT`     | `15`    | GMP % threshold                            |
+| `MIN_GMP_PCT_SME`       | `40` | GMP % threshold for SME issues        |
+| `MIN_GMP_PCT_MAINBOARD` | `15` | GMP % threshold for mainboard issues  |
 | `FUZZY_THRESHOLD` | `80`    | name-match strictness (0-100)              |
 | `SEND_WHEN_EMPTY` | `true`  | send a "nothing today" heartbeat message   |
 | `WHATSAPP_PROVIDER` | `telegram` | `telegram`, `callmebot` or `twilio`    |
@@ -201,7 +202,11 @@ You're done. Check your phone tomorrow afternoon.
 * **GMP %** — `(GMP / Issue Price) * 100`, using the **upper band** of the price range
   (the cap price is what applicants actually pay). If a site prints its own gain %,
   that value is preferred over the computed one.
-* **Threshold** — strictly greater than 15% by default.
+* **Threshold** — applied per listing type, because the two trade on completely
+  different scales. SME issues have tiny floats and a thin grey market, so their
+  GMPs routinely run 20-50% and a 15% bar would flag almost everything; mainboard
+  GMPs of 15%+ are already notable. Defaults: **SME > 40%**, **Mainboard > 15%**.
+  The type is read from the exchange tag in the name ("BSE SME", "NSE SME").
 * **Name matching** — both names are stripped of noise (`Ltd`, `Limited`, `IPO`, `SME`,
   `(Mainboard)`, punctuation) then compared with `rapidfuzz.token_set_ratio`. A score
   below 80 is treated as "not found" and the message shows `IPO Watch GMP: Not listed`

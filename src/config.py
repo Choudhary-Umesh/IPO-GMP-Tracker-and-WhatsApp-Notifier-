@@ -12,6 +12,12 @@ from zoneinfo import ZoneInfo
 # --------------------------------------------------------------------------- #
 IST = ZoneInfo("Asia/Kolkata")
 
+# Bumped by hand when behaviour changes, and shown in the daily message so you
+# can always tell which version of the pipeline produced an alert.
+#   v1.0 - single 15% GMP threshold for every IPO
+#   v2.0 - per-type thresholds (SME 40% / Mainboard 15%), cleaned company names
+APP_VERSION = "2.0"
+
 # --------------------------------------------------------------------------- #
 # Data sources
 # --------------------------------------------------------------------------- #
@@ -25,8 +31,14 @@ IPOWATCH_URL = os.getenv(
 # --------------------------------------------------------------------------- #
 # Business rules
 # --------------------------------------------------------------------------- #
-# Keep only IPOs whose (GMP / Issue Price) * 100 is strictly greater than this.
+# Keep only IPOs whose (GMP / Issue Price) * 100 is strictly greater than the
+# threshold for their listing type. SME issues have tiny floats and a thin grey
+# market, so their GMPs run far higher and need a much stricter bar to be
+# meaningful. MIN_GMP_PCT is still honoured as the mainboard default so existing
+# setups keep working.
 MIN_GMP_PCT = float(os.getenv("MIN_GMP_PCT", "15"))
+MIN_GMP_PCT_MAINBOARD = float(os.getenv("MIN_GMP_PCT_MAINBOARD", str(MIN_GMP_PCT)))
+MIN_GMP_PCT_SME = float(os.getenv("MIN_GMP_PCT_SME", "40"))
 
 # rapidfuzz / difflib score (0-100) below which we treat a name as "no match".
 FUZZY_THRESHOLD = int(os.getenv("FUZZY_THRESHOLD", "80"))

@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Optional
 
+from .config import APP_VERSION, MIN_GMP_PCT_MAINBOARD, MIN_GMP_PCT_SME
+
 SEPARATOR = "---------------------------------"
 
 
@@ -28,15 +30,17 @@ def build_message(rows: list[dict[str, Any]], run_date: dt.date) -> str:
     """Render the daily alert. `rows` are SQLite records enriched by Step 2."""
     header = (
         f"📈 IPOs Closing TODAY ({run_date.strftime('%d-%b-%Y')})\n"
-        f"Filter: GMP above 15%"
+        f"Filter: SME above {MIN_GMP_PCT_SME:.0f}% | Mainboard above "
+        f"{MIN_GMP_PCT_MAINBOARD:.0f}%"
     )
 
     if not rows:
         return (
             f"{header}\n\n"
-            "No IPO closing today crosses the 15% GMP threshold. "
+            "No IPO closing today crosses its GMP threshold. "
             "Nothing to apply for.\n"
-            f"{SEPARATOR}"
+            f"{SEPARATOR}\n"
+            f"IPO Tracker v{APP_VERSION}"
         )
 
     blocks: list[str] = []
@@ -44,7 +48,7 @@ def build_message(rows: list[dict[str, Any]], run_date: dt.date) -> str:
         blocks.append(
             "\n".join(
                 [
-                    f"Company Name: {row['name']}",
+                    f"Company Name: {row['name']} [{row.get('exchange') or '?'}]",
                     _line("InvestorGain GMP", row.get("ig_gmp"), row.get("ig_gmp_pct")),
                     _line("IPO Watch GMP", row.get("iw_gmp"), row.get("iw_gmp_pct")),
                     SEPARATOR,
@@ -52,5 +56,8 @@ def build_message(rows: list[dict[str, Any]], run_date: dt.date) -> str:
             )
         )
 
-    footer = "⚠️ Apply before the cut-off (usually 5 PM). GMP is unofficial data."
+    footer = (
+        "⚠️ Apply before the cut-off (usually 5 PM). GMP is unofficial data.\n"
+        f"IPO Tracker v{APP_VERSION}"
+    )
     return f"{header}\n\n" + "\n\n".join(blocks) + f"\n\n{footer}"

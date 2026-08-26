@@ -18,9 +18,10 @@ from typing import Any, Optional
 from bs4 import BeautifulSoup
 
 from . import db
-from .config import INVESTORGAIN_URL, MIN_GMP_PCT
+from .config import INVESTORGAIN_URL, MIN_GMP_PCT_MAINBOARD, MIN_GMP_PCT_SME
 from .utils import (
     clean_display_name,
+    detect_exchange,
     compute_gmp_pct,
     dump_debug_html,
     fetch_html,
@@ -103,7 +104,7 @@ def _parse_row(cells: list[str], cols: dict[str, int]) -> Optional[dict[str, Any
         gmp_pct = compute_gmp_pct(gmp, price)
 
     close_date = parse_close_date(col("close"))
-    exchange = "SME" if "sme" in raw_name.lower() else "Mainboard"
+    exchange = detect_exchange(raw_name)
 
     display = clean_display_name(raw_name)
     return {
@@ -173,30 +174,40 @@ def parse_rows(html: str) -> list[dict[str, Any]]:
     return rows
 
 
+def threshold_for(exchange: Optional[str]) -> float:
+    """SME issues need a much higher GMP to be worth flagging than mainboard ones."""
+    return MIN_GMP_PCT_SME if (exchange or "").upper() == "SME" else MIN_GMP_PCT_MAINBOARD
+
+
 def filter_rows(
     rows: list[dict[str, Any]],
     *,
     target_date: Optional[dt.date] = None,
-    min_gmp_pct: float = MIN_GMP_PCT,
 ) -> list[dict[str, Any]]:
-    """Apply the two business rules: closing today AND GMP% above threshold."""
+    """Apply the business rules: closing today AND GMP% above the threshold for
+    that listing type (SME and mainboard are judged on different scales)."""
     target = target_date or today_ist()
     kept: list[dict[str, Any]] = []
 
     for row in rows:
         if row["close_date"] != target:
             continue
+        limit = threshold_for(row.get("exchange"))
         pct = row.get("ig_gmp_pct")
-        if pct is None or pct <= min_gmp_pct:
+        if pct is None or pct <= limit:
             log.info(
-                "Skipping %s — closes today but GMP%% is %s (need > %s)",
-                row["name"], pct, min_gmp_pct,
+                "Skipping %s [%s] — closes today but GMP%% is %s (need > %s)",
+                row["name"], row.get("exchange"), pct, limit,
             )
             continue
+        log.info(
+            "Selected %s [%s] — GMP%% %s > %s", row["name"], row.get("exchange"), pct, limit
+        )
         kept.append(row)
 
     log.info(
-        "%s IPO(s) close on %s with GMP%% > %s", len(kept), target.isoformat(), min_gmp_pct
+        "%s IPO(s) close on %s above their type threshold (SME > %s%%, Mainboard > %s%%)",
+        len(kept), target.isoformat(), MIN_GMP_PCT_SME, MIN_GMP_PCT_MAINBOARD,
     )
     return kept
 

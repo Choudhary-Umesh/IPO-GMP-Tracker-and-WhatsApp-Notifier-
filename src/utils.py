@@ -234,6 +234,33 @@ _STATUS_TOKENS = re.compile(
 )
 
 
+# InvestorGain appends an exchange tag and a one-letter status badge to every
+# company name: "Q&T Foods BSE SME O", "Shiprocket IPO O". Left in place these
+# pollute the message and drag fuzzy-match scores down, so they are stripped
+# from the tail of the name (never from the middle, which could be a real word).
+_TRAILING_NOISE = {
+    "ipo", "sme", "bse", "nse", "mainboard", "main", "board",
+    "o", "u", "c", "l", "x", "new", "live", "open", "closed", "listed", "upcoming",
+}
+
+
+def _strip_trailing_noise(tokens: list[str]) -> list[str]:
+    out = list(tokens)
+    while len(out) > 1 and out[-1].lower().strip(".,-–—") in _TRAILING_NOISE:
+        out.pop()
+    return out
+
+
+def detect_exchange(name: str) -> str:
+    """'SME' or 'Mainboard', read from the exchange tag in the name cell.
+    Handles 'BSE SME', 'NSE SME', '(SME)' and 'SME-IPO' alike."""
+    tokens = {
+        t.lower().strip(".,-–—()[]/")
+        for t in re.split(r"[\s/\-]+", name or "")
+    }
+    return "SME" if "sme" in tokens else "Mainboard"
+
+
 def normalize_name(name: str) -> str:
     """Aggressively normalise a company name so InvestorGain's
     'Acme Industries Ltd IPO (SME)' matches IPO Watch's 'Acme Industries IPO'."""
@@ -243,22 +270,22 @@ def normalize_name(name: str) -> str:
     text = re.sub(r"\(.*?\)|\[.*?\]", " ", text)      # drop bracketed annotations
     text = _STATUS_TOKENS.sub(" ", text)
     text = re.sub(r"[^a-z0-9\s]", " ", text)
-    tokens = [t for t in text.split() if t and t not in _NOISE_WORDS]
+    tokens = _strip_trailing_noise(text.split())
+    tokens = [t for t in tokens if t and t not in _NOISE_WORDS]
     return " ".join(tokens)
 
 
 def clean_display_name(name: str) -> str:
-    """Tidy a name for the WhatsApp message without destroying it.
+    """Tidy a name for the WhatsApp/Telegram message without destroying it.
+    'Q&T Foods BSE SME O' -> 'Q&T Foods'
     'Alpha Cement Industries Ltd IPO (SME)' -> 'Alpha Cement Industries Ltd'"""
     text = re.sub(r"\s+", " ", (name or "").strip())
     # Drop trailing annotations such as "(SME)", "(NSE SME)", "(Mainboard)".
     text = re.sub(r"\s*\((?:[^()]*)\)\s*$", "", text).strip()
     text = _STATUS_TOKENS.sub(" ", text)
-    # Drop a trailing "IPO" (possibly repeated after the bracket removal).
-    for _ in range(2):
-        text = re.sub(r"\bIPO\b\s*$", "", text, flags=re.IGNORECASE).strip(" -–—,")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text or re.sub(r"\s+", " ", (name or "").strip())
+    tokens = _strip_trailing_noise(re.sub(r"\s+", " ", text).split())
+    cleaned = " ".join(tokens).strip(" -–—,")
+    return cleaned or re.sub(r"\s+", " ", (name or "").strip())
 
 
 def first_non_empty(values: Iterable[Optional[str]]) -> Optional[str]:
