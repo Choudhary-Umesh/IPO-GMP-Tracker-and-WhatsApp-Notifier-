@@ -72,7 +72,7 @@ def main() -> int:
     rows = db.get_candidates()
 
     # ---------------------------------------------------------------- Step 3
-    message = build_message(rows, run_date)
+    message = build_message(rows, run_date, run_time=now_ist())
     log.info("Message built (%s chars)", len(message))
 
     if not rows and not SEND_WHEN_EMPTY and not args.dry_run:

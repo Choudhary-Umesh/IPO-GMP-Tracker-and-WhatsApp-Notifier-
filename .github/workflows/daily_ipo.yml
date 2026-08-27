@@ -3,11 +3,12 @@ name: Daily IPO WhatsApp Alert
 on:
   schedule:
     # GitHub cron is ALWAYS in UTC. IST = UTC + 5:30.
-    # 08:00 UTC = 13:30 IST. We deliberately fire 30 min early because
-    # GitHub's shared scheduler routinely delays cron jobs by 5-20 minutes
-    # (occasionally more at the top of the hour), and you want the message
-    # in hand BEFORE 14:00 IST.
-    - cron: "0 8 * * 1-5"     # Mon-Fri; use "0 8 * * *" for all 7 days
+    # 07:23 UTC = 12:53 IST. Two deliberate choices here:
+    #   1. A full hour of headroom before the 14:00 IST target, because GitHub's
+    #      shared scheduler delays jobs anywhere from 5 minutes to over an hour.
+    #   2. An odd minute, never :00 or :30 — those are the most congested slots
+    #      on the scheduler and the most likely to be delayed or dropped.
+    - cron: "23 7 * * 1-5"    # Mon-Fri; use "23 7 * * *" for all 7 days
   workflow_dispatch:          # lets you run it manually from the Actions tab
 
 # Prevent two runs (e.g. cron + manual) colliding.

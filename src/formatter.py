@@ -26,8 +26,13 @@ def _line(label: str, gmp: Optional[float], pct: Optional[float]) -> str:
     return f"- {label}: {_money(gmp)} ({_pct(pct)})"
 
 
-def build_message(rows: list[dict[str, Any]], run_date: dt.date) -> str:
+def build_message(
+    rows: list[dict[str, Any]],
+    run_date: dt.date,
+    run_time: Optional[dt.datetime] = None,
+) -> str:
     """Render the daily alert. `rows` are SQLite records enriched by Step 2."""
+    stamp = (run_time or dt.datetime.now()).strftime("%H:%M")
     header = (
         f"📈 IPOs Closing TODAY ({run_date.strftime('%d-%b-%Y')})\n"
         f"Filter: SME above {MIN_GMP_PCT_SME:.0f}% | Mainboard above "
@@ -40,7 +45,7 @@ def build_message(rows: list[dict[str, Any]], run_date: dt.date) -> str:
             "No IPO closing today crosses its GMP threshold. "
             "Nothing to apply for.\n"
             f"{SEPARATOR}\n"
-            f"IPO Tracker v{APP_VERSION}"
+            f"IPO Tracker v{APP_VERSION} · sent {stamp} IST"
         )
 
     blocks: list[str] = []
@@ -58,6 +63,6 @@ def build_message(rows: list[dict[str, Any]], run_date: dt.date) -> str:
 
     footer = (
         "⚠️ Apply before the cut-off (usually 5 PM). GMP is unofficial data.\n"
-        f"IPO Tracker v{APP_VERSION}"
+        f"IPO Tracker v{APP_VERSION} · sent {stamp} IST"
     )
     return f"{header}\n\n" + "\n\n".join(blocks) + f"\n\n{footer}"
