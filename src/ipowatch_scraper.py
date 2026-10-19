@@ -30,6 +30,10 @@ from .utils import (
 
 log = logging.getLogger(__name__)
 
+
+class SourceUnavailable(RuntimeError):
+    """IPO Watch could not be used today; the pipeline continues without it."""
+
 try:
     from rapidfuzz import fuzz as _fuzz
 
@@ -182,11 +186,16 @@ def run(*, persist: bool = True) -> list[dict[str, Any]]:
     log.info("Cross-validating %s candidate(s) using %s", len(candidates), _MATCHER)
     # IPO Watch is server-rendered plain HTML. It is also ad-heavy, which makes a
     # headless browser hang, so it always uses plain HTTP regardless of USE_PLAYWRIGHT.
-    html = fetch_html(IPOWATCH_URL, use_browser=IPOWATCH_USE_PLAYWRIGHT)
-    entries = parse_entries(html)
+    # IPO Watch is only a cross-check: if it is down or its layout changed, the
+    # alert must still go out with InvestorGain data alone.
+    try:
+        html = fetch_html(IPOWATCH_URL, use_browser=IPOWATCH_USE_PLAYWRIGHT)
+        entries = parse_entries(html)
+    except Exception as exc:  # noqa: BLE001
+        raise SourceUnavailable(f"IPO Watch unavailable: {exc}") from exc
     if not entries:
         dump_debug_html("ipowatch_empty", html)
-        log.warning("IPO Watch returned no parsable rows; continuing without it")
+        raise SourceUnavailable("IPO Watch returned no parsable rows (layout change?)")
 
     results: list[dict[str, Any]] = []
     for ipo_id, name, norm in candidates:

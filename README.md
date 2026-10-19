@@ -1,282 +1,202 @@
-# 📈 IPO Tracker & WhatsApp Notifier
+# 📈 IPO GMP Tracker & WhatsApp Notifier
 
-A zero-cost, fully cloud-hosted pipeline that scrapes IPO grey-market-premium data
-every weekday, keeps only the IPOs **closing today with GMP above 15%**,
-cross-checks them against a second source, and sends you a **single WhatsApp
-message before 2:00 PM IST**.
+Every weekday this pipeline scrapes IPO grey-market-premium (GMP) data, keeps only
+the IPOs **closing today** whose GMP clears a threshold, cross-checks them against a
+second site, and sends **one WhatsApp message before 2:00 PM IST**.
 
-Nothing runs on your Mac. No background daemon, no browser window, no battery drain.
-
----
-
-## 🧭 Pipeline
-
-```
-GitHub Actions cron (08:00 UTC = 13:30 IST)
-        │
-        ├─ STEP 1  investorgain.com/report/ipo-gmp-live/331/
-        │          filter: Close Date == today (IST) AND (GMP / Issue Price)*100 > 15
-        │          store survivors ──────────────► SQLite (ipo_tracker.db)
-        │
-        ├─ STEP 2  read names from SQLite
-        │          scrape ipowatch.in, fuzzy-match names (rapidfuzz / difflib)
-        │          write matched GMP back ───────► SQLite
-        │
-        └─ STEP 3  build message ──► CallMeBot / Twilio ──► 📱 your WhatsApp
-```
+Runs entirely on GitHub Actions — nothing runs on your computer.
 
 ---
 
-## 📁 Directory tree
+## 🩹 What was broken (fixed in v3.0)
+
+| Problem | Effect | Fix |
+|---|---|---|
+| **GitHub cron ran 5–9 h late.** The 07:23 UTC (12:53 IST) schedule actually started between **5:45 PM and 10:18 PM IST** on every run in Sep–Oct 2026. GitHub's free scheduler gives no timing guarantee. | Message (if any) arrived at night, after the IPO had closed. | Primary trigger is now an **external scheduler (cron-job.org) at 13:30 IST** calling the workflow API — starts within ~1 min. Early GitHub crons stay as **backups** that wait until 13:40 IST and only send if nothing was sent yet. |
+| Default provider was **Telegram**. | With no `WHATSAPP_PROVIDER` variable the alert went to Telegram, not WhatsApp. | `auto` mode picks a WhatsApp provider first and logs a warning when it falls back to a non-WhatsApp channel. |
+| A scraper error **crashed the run with no message**. | Silent days (e.g. 9 and 15 Oct runs failed). | Source failures now send a "could not build today's alert" message; IPO Watch failures degrade to InvestorGain-only; a failure-alert step covers everything else. |
+| Retries treated bad credentials like network blips; CallMeBot errors returned with HTTP 200 slipped through. | Wasted retries / false "success". | 4xx = permanent (no retry), 5xx/429/timeouts = exponential backoff, body-level CallMeBot errors detected. Optional `FALLBACK_PROVIDER`. |
+| No dedup. | Manual + scheduled runs could double-send. | One alert per IST day via a cache marker (`force` input to resend). |
+| `ubuntu-latest` → Ubuntu 26 from 19 Oct 2026; Node 20 actions deprecated. | Chromium/Playwright could break. | Runner pinned to `ubuntu-24.04`; actions bumped to Node 24 versions. |
+| No WhatsApp Cloud API support. | — | Official **Meta WhatsApp Cloud API** provider with approved-template support. |
+| "Tests" only printed output. | Bugs not caught. | 33 real pytest tests + a CI workflow on every push. |
+
+---
+
+## 🧭 How it works
 
 ```
-ipo-tracker/
-├── .github/
-│   └── workflows/
-│       ├── daily_ipo.yml           # daily cron + manual trigger
-│       └── keepalive.yml           # stops GitHub disabling the cron after 60 days
+13:30 IST  cron-job.org ──POST workflow_dispatch──┐
+06:11 / 08:11 / 10:11 / 13:17 IST  GitHub cron ──► gate (wait until 13:40, skip if already sent)
+                                                  │
+                                                  ▼
+                       notify job  (one at a time · skip if today already sent)
+   STEP 1  investorgain.com  → close date == today (IST) AND GMP% > threshold → SQLite
+   STEP 2  ipowatch.in       → fuzzy-match names → enrich SQLite (optional; failure ≠ fatal)
+   STEP 3  build message     → WhatsApp (Meta / CallMeBot / Twilio) → fallback channel
+           mark today as sent · step summary · logs uploaded as artifact
+           on failure → alert message with the run link
+```
+
+**Thresholds:** SME > 40 %, Mainboard > 15 % (GMP ÷ upper price band × 100).
+
+```
+├── .github/workflows/
+│   ├── daily_ipo.yml        # dispatch trigger + backup crons, gate, dedup, alerts
+│   ├── tests.yml            # pytest on every push
+│   └── keepalive.yml        # stops GitHub disabling schedules after 60 idle days
 ├── src/
-│   ├── __init__.py
-│   ├── config.py                   # all env-var driven settings
-│   ├── utils.py                    # HTTP, number/date parsing, name normalisation
-│   ├── db.py                       # SQLite schema + CRUD
-│   ├── investorgain_scraper.py     # STEP 1 — primary source + filtering
-│   ├── ipowatch_scraper.py         # STEP 2 — cross-validation + fuzzy matching
-│   ├── formatter.py                # WhatsApp message layout
-│   └── notifier.py                 # STEP 3 — CallMeBot / Twilio delivery
-├── tests/
-│   └── test_pipeline_offline.py    # runs the whole pipeline on fixture HTML
-├── main.py                         # orchestrator / CLI entry point
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+│   ├── config.py            # every setting comes from env vars / .env
+│   ├── timing.py            # send window, backup gate, late banner (pure functions)
+│   ├── investorgain_scraper.py   # STEP 1
+│   ├── ipowatch_scraper.py       # STEP 2
+│   ├── formatter.py              # message layout
+│   ├── notifier.py               # STEP 3: providers, retry, fallback
+│   ├── db.py · utils.py
+├── scripts/wait_gate.py     # backup-run gate (stdlib only)
+├── tests/                   # pytest suite (offline)
+├── main.py                  # CLI / orchestrator
+└── verify.py                # read-only audit of scraped data
 ```
 
 ---
 
-## 📱 Sample output
+# 🚀 Setup
 
-```
-📈 IPOs Closing TODAY (13-Aug-2026)
-Filter: GMP above 15%
+No secret ever goes in code. Everything is a **GitHub Secret** (sensitive) or a
+**GitHub Variable** (settings), or a local `.env` file that git ignores.
 
-Company Name: Alpha Cement Industries Ltd
-- InvestorGain GMP: ₹45 (39.47%)
-- IPO Watch GMP: ₹44 (38.60%)
----------------------------------
+## Part 1 — Choose a WhatsApp provider (one is enough)
 
-Company Name: Delta Pharma Ltd
-- InvestorGain GMP: ₹250 (23.15%)
-- IPO Watch GMP: ₹240 (22.22%)
----------------------------------
+### Option A — CallMeBot (free, 5 minutes, your own number only)
 
-⚠️ Apply before the cut-off (usually 5 PM). GMP is unofficial data.
-```
+1. Open <https://www.callmebot.com/blog/free-api-whatsapp-messages/> and save the bot
+   number shown there in your phone contacts (they rotate it — trust the page).
+2. From WhatsApp send it: `I allow callmebot to send me messages`
+3. It replies with your **API key**. If nothing comes in ~2 minutes, their signups are
+   full — try later or use Option B.
+4. Secrets: `CALLMEBOT_PHONE` = `+919876543210`, `CALLMEBOT_APIKEY` = the key.
 
----
+### Option B — Meta WhatsApp Cloud API (official, most reliable)
 
-# 🚀 Setup guide (start to finish, ~20 minutes)
+1. <https://developers.facebook.com> → **Create app** → type **Business** → add **WhatsApp**.
+2. In **WhatsApp → API Setup** note the **Phone number ID**. With the free test number
+   you must add your own number as a verified recipient there.
+3. Create a template in **WhatsApp Manager → Message templates**:
+   name `ipo_daily_alert`, category **Utility**, language **English (en)**,
+   body: `IPO GMP update: {{1}}` → submit and wait for **Approved**.
+   (Business-initiated messages need an approved template; the whole alert is passed
+   as `{{1}}`, flattened to one line because Meta forbids newlines in parameters.)
+4. Create a **permanent token**: Business Settings → System users → add a system user →
+   assign the app → **Generate token** with `whatsapp_business_messaging`.
+5. Secrets: `META_WA_TOKEN`, `META_WA_PHONE_NUMBER_ID`, `META_WA_TO` (`919876543210`).
+   Variable: `META_WA_TEMPLATE` = `ipo_daily_alert` (and `META_WA_TEMPLATE_LANG` if not `en`).
+6. Meta bills template messages per conversation; check Meta's current pricing.
 
-## Part 1 — Set up your notification channel
+### Option C — Twilio WhatsApp
+Secrets `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `TWILIO_TO`.
+The sandbox expires every 72 h unless re-joined, so it is poor for automation.
 
-Pick ONE. Telegram is the default because it never fails to register; CallMeBot
-delivers to WhatsApp but has a hard capacity limit on new signups.
+### Recommended extra — Telegram as fallback
+@BotFather → `/newbot` → token; message your bot once; get your chat id from
+@userinfobot. Secrets `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, variable
+`FALLBACK_PROVIDER` = `telegram`. If WhatsApp delivery ever fails you still get the
+alert (and the run is marked red so you know to fix WhatsApp).
 
-### Option A — Telegram (recommended, always available)
+## Part 2 — Add secrets and variables
 
-1. In Telegram, message **@BotFather** → `/newbot` → pick a name and a username
-   ending in `bot`. He replies with a token like `123456789:AAE...`.
-2. Open a chat with your new bot and send it any message (this is required — bots
-   cannot message you first).
-3. Get your chat ID: open in a browser
-   `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and read `"chat":{"id":123456789`.
-   Or just message **@userinfobot**, which replies with your ID.
-4. Secrets to add later: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
-   Set the repo variable `WHATSAPP_PROVIDER` to `telegram` (this is the default).
+Repo → **Settings → Secrets and variables → Actions**.
 
-### Option B — WhatsApp via CallMeBot
+**Secrets tab** — only the ones for your provider(s) from Part 1.
 
-CallMeBot is free forever for personal use, needs no credit card, and — unlike the
-Twilio sandbox — does not expire every 72 hours. It can only message **your own
-number**, which is exactly what you need.
+**Variables tab** (all optional):
 
-**Availability caveat:** CallMeBot caps how many people can register. When their
-bot is full the setup page masks the phone number entirely and no new signups are
-possible until slots free up. Check the page before relying on this route.
+| Variable | Default | Meaning |
+|---|---|---|
+| `WHATSAPP_PROVIDER` | `auto` | `auto`, `meta`, `callmebot`, `twilio`, `telegram`. `auto` = first configured of meta → callmebot → twilio → telegram |
+| `FALLBACK_PROVIDER` | — | e.g. `telegram` |
+| `META_WA_TEMPLATE` | — | approved template name (Option B) |
+| `MIN_GMP_PCT_SME` | `40` | SME threshold % |
+| `MIN_GMP_PCT_MAINBOARD` | `15` | mainboard threshold % |
+| `SEND_WHEN_EMPTY` | `true` | send a "nothing today" message so you know it ran |
+| `SEND_DEADLINE` | `14:00` | later than this, the message gets a "delayed" banner |
+| `FUZZY_THRESHOLD` | `80` | name-match strictness |
+| `USE_PLAYWRIGHT` | `false` | `true` if InvestorGain renders its table with JavaScript |
 
-1. Open <https://www.callmebot.com/blog/free-api-whatsapp-messages/> and copy the
-   bot's phone number shown there. They rotate it, so always trust the page.
-2. Save that number in your phone contacts (any name).
-3. From WhatsApp, send it exactly: `I allow callmebot to send me messages`
-4. Within ~2 minutes the bot replies: `API Activated for your phone number. Your APIKEY is 1234567`.
-   Save that 7-digit key. (If nothing arrives in 2 minutes, retry after 24 hours.)
-5. Note your own number in international format, e.g. `+919876543210`.
+> If you previously set `WHATSAPP_PROVIDER=telegram`, change it to `auto` (or your
+> WhatsApp provider) — otherwise alerts keep going to Telegram.
 
-> Prefer Twilio instead? Set `WHATSAPP_PROVIDER=twilio` and fill the four Twilio
-> secrets. Be aware the sandbox requires re-sending the `join <code>` message
-> every 72 hours, which breaks unattended automation — CallMeBot is the better fit.
+## Part 3 — Test delivery right now
 
-## Part 2 — Create the GitHub repository
+1. **Actions → Daily IPO WhatsApp Alert → Run workflow**, tick **force**, run.
+2. Open the run: the **Provider check** step shows which provider was picked (no secret
+   values printed); the **run summary** shows the exact message and the IST send time.
+3. The message should reach your phone within a minute.
 
-1. Download/unzip this project.
-2. On GitHub: **New repository** → name it `ipo-tracker` → **Private** → Create.
-3. Push the code:
+## Part 4 — Exact-time trigger with cron-job.org (the actual fix)
 
-```bash
-cd ipo-tracker
-git init
-git add .
-git commit -m "IPO tracker & WhatsApp notifier"
-git branch -M main
-git remote add origin https://github.com/<your-username>/ipo-tracker.git
-git push -u origin main
-```
+**4a. Create a GitHub token** — GitHub → Settings → Developer settings →
+**Fine-grained tokens** → Generate:
+- Repository access: **Only select repositories** → this repo
+- Permissions → Repository → **Actions: Read and write** (nothing else)
+- Expiration: up to 1 year — set a reminder to renew it.
 
-> Make sure `.env` is never committed — `.gitignore` already covers it.
+**4b. Create the job** at <https://cron-job.org> (free account) → **Create cronjob**:
 
-## Part 3 — Add your secrets
+| Field | Value |
+|---|---|
+| URL | `https://api.github.com/repos/Choudhary-Umesh/IPO-GMP-Tracker-and-WhatsApp-Notifier-/actions/workflows/daily_ipo.yml/dispatches` |
+| Schedule | Custom: **13:30**, days **Mon–Fri**, timezone **Asia/Kolkata** |
+| Advanced → Request method | `POST` |
+| Advanced → Headers | `Accept: application/vnd.github+json` · `Authorization: Bearer <your token>` · `X-GitHub-Api-Version: 2022-11-28` · `Content-Type: application/json` |
+| Advanced → Request body | `{"ref":"main","inputs":{"source":"cron-job.org"}}` |
+| Notifications | enable "on failure" |
 
-Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
+Click **Test run**: GitHub must answer **HTTP 204** and a new run appears in Actions
+within a minute (it will skip with "already sent today" if Part 3 already sent one —
+that is the dedup working). Optionally add a second identical job at 13:45 as a
+retry; dedup prevents a double message.
 
-| Secret name        | Value                        |
-|--------------------|------------------------------|
-| `TELEGRAM_BOT_TOKEN` | the BotFather token (Option A) |
-| `TELEGRAM_CHAT_ID`   | your numeric chat ID (Option A) |
-| `CALLMEBOT_PHONE`    | `+919876543210` — only for Option B |
-| `CALLMEBOT_APIKEY`   | the 7-digit key — only for Option B |
+**Timeline on a normal day:** 13:30 trigger → ~13:31–13:33 message on your phone.
+If cron-job.org or the token ever fails, a GitHub backup cron sends at ~13:40 or
+whenever GitHub gets to it (with a "delayed" banner after 14:00).
 
-Optional, under the **Variables** tab (not secrets — these aren't sensitive):
-
-| Variable          | Default | Meaning                                   |
-|-------------------|---------|-------------------------------------------|
-| `MIN_GMP_PCT_SME`       | `40` | GMP % threshold for SME issues        |
-| `MIN_GMP_PCT_MAINBOARD` | `15` | GMP % threshold for mainboard issues  |
-| `FUZZY_THRESHOLD` | `80`    | name-match strictness (0-100)              |
-| `SEND_WHEN_EMPTY` | `true`  | send a "nothing today" heartbeat message   |
-| `WHATSAPP_PROVIDER` | `telegram` | `telegram`, `callmebot` or `twilio`    |
-
-## Part 4 — Test it immediately (don't wait for tomorrow)
-
-1. Repo → **Actions** tab → if prompted, click **I understand my workflows, go ahead and enable them**.
-2. Select **Daily IPO WhatsApp Alert** → **Run workflow** → **Run workflow**.
-3. Open the run, expand **Run IPO pipeline**, and watch the logs.
-4. A WhatsApp message should arrive within ~60 seconds.
-
-To test only the WhatsApp leg (no scraping), run locally:
+## Local run
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env        # fill in your phone + apikey
-export $(grep -v '^#' .env | xargs)
-python main.py --test-message
+pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env          # fill in your provider values (.env is git-ignored)
+
+python main.py --check-config        # which providers are configured
+python main.py --test-message        # send a test message only
+python main.py --dry-run             # full scrape, print the message, send nothing
+python main.py --date 2026-08-20     # pretend it's another date
+python verify.py                     # audit scraped data row by row
+python -m pytest -q                  # offline tests
 ```
 
-Other useful local commands:
-
-```bash
-python main.py --dry-run              # full scrape, prints message, sends nothing
-python main.py --date 2026-08-20      # pretend it's another date
-python main.py -v                     # verbose logs
-python tests/test_pipeline_offline.py # no network needed; validates parsing logic
-```
-
-## Part 5 — Confirm the schedule
-
-The workflow is set to `cron: "0 8 * * 1-5"` → **08:00 UTC = 13:30 IST, Mon–Fri**.
-
-It fires 30 minutes early on purpose: GitHub's shared scheduler frequently delays
-cron jobs by 5–20 minutes, so a 13:30 trigger reliably lands well before 2:00 PM IST.
-Edit that line in `.github/workflows/daily_ipo.yml` to shift it (`* * *` instead of
-`* * 1-5` for all seven days).
-
-You're done. Check your phone tomorrow afternoon.
-
----
-
-## ⚙️ How the filtering works
-
-* **Close date** — parsed from the site's Close column and compared to today's date in
-  `Asia/Kolkata`, so a run at 13:30 IST always uses the correct Indian calendar day.
-* **GMP %** — `(GMP / Issue Price) * 100`, using the **upper band** of the price range
-  (the cap price is what applicants actually pay). If a site prints its own gain %,
-  that value is preferred over the computed one.
-* **Threshold** — applied per listing type, because the two trade on completely
-  different scales. SME issues have tiny floats and a thin grey market, so their
-  GMPs routinely run 20-50% and a 15% bar would flag almost everything; mainboard
-  GMPs of 15%+ are already notable. Defaults: **SME > 40%**, **Mainboard > 15%**.
-  The type is read from the exchange tag in the name ("BSE SME", "NSE SME").
-* **Name matching** — both names are stripped of noise (`Ltd`, `Limited`, `IPO`, `SME`,
-  `(Mainboard)`, punctuation) then compared with `rapidfuzz.token_set_ratio`. A score
-  below 80 is treated as "not found" and the message shows `IPO Watch GMP: Not listed`
-  rather than a wrong number.
+Exit codes: `0` ok · `1` failed · `3` delivered only via the fallback channel.
 
 ---
 
 ## 🩺 Troubleshooting
 
-| Symptom | Cause & fix |
+| Symptom | Check |
 |---|---|
-| No message at all, workflow green | You had no qualifying IPO and `SEND_WHEN_EMPTY=false`. Set it to `true`. |
-| `CallMeBot rejected the message` | Wrong API key, or phone number missing the `+91` prefix. Re-run the activation from Part 1. |
-| `No GMP table found on InvestorGain` | Layout change or JS rendering. Download the `debug-html-*` artifact from the failed run to inspect. If the table is missing from the HTML, uncomment `playwright` in `requirements.txt`, add a `python -m playwright install --with-deps chromium` step to the workflow, and set `USE_PLAYWRIGHT=true`. |
-| `IPO Watch GMP: Not listed` | The IPO genuinely isn't on ipowatch.in yet, or the names differ too much. Lower `FUZZY_THRESHOLD` to ~70. |
-| Workflow stopped running after ~2 months | GitHub disables schedules in dormant repos. The `keepalive.yml` workflow prevents this — make sure it's enabled. |
-| Message arrives split in two | More than ~900 characters (a very busy IPO day). Raise `MAX_MESSAGE_CHARS` if your provider allows. |
-| Everything green but late | GitHub cron delay. Move the trigger earlier, e.g. `"45 7 * * 1-5"` (13:15 IST). |
-
----
-
-## 💰 Cost
-
-| Component | Cost |
-|---|---|
-| GitHub Actions (public repo) | Free, unlimited minutes |
-| GitHub Actions (private repo) | Free tier: 2,000 min/month. This job uses ~1 min/day ≈ 22 min/month |
-| CallMeBot WhatsApp API | Free for personal use |
-| Scraping + SQLite | Free |
+| Message arrives on Telegram, not WhatsApp | Provider check step says `selected telegram`. Add WhatsApp secrets; set `WHATSAPP_PROVIDER` to `auto`. |
+| No run at 13:30 | cron-job.org job history: 401 = token expired/wrong, 404 = token lacks repo access or wrong URL, 422 = wrong `ref`. |
+| Run says "already sent today" | Dedup. Use **Run workflow → force** to resend. |
+| `Meta WhatsApp rejected … HTTP 401` | Token expired — use a system-user permanent token. |
+| Meta accepted but nothing arrived | Template not approved/paused, wrong language code, or (test number) recipient not verified. Without `META_WA_TEMPLATE`, text is only delivered within 24 h of you messaging the business number. |
+| `CallMeBot rejected the message: APIKey is invalid` | Redo the CallMeBot activation; phone must include `+91`. |
+| "InvestorGain could not be read" message | Site down or layout changed. Download the `run-<id>` artifact (logs + HTML). If the table is missing from the HTML, set `USE_PLAYWRIGHT=true`. |
+| "IPO Watch cross-check unavailable" | Second source failed; InvestorGain data was still sent. |
+| Schedules stopped after ~2 months | GitHub disables schedules in idle repos; keep `keepalive.yml` enabled. |
 
 ---
 
 ## ⚠️ Notes
 
-* GMP is unofficial, unregulated grey-market data. Treat it as a signal to look, not
-  as investment advice — a high GMP on the closing day can and does evaporate by listing.
-* Both sites are scraped politely (one request each per day). Their HTML can change
-  at any time; the parsers map columns by header text rather than position to survive
-  minor reshuffles, and fail loudly with a saved HTML artifact when they can't.
-* Please respect each site's terms of use.
-
----
-
-## 🔍 Verifying the scraped data is correct
-
-`verify.py` is a read-only audit tool: it fetches both sites, prints every row
-with the raw cell text next to the value extracted from it, explains why each row
-passed or failed the filter, and previews the message — without sending anything
-or touching the production database.
-
-```bash
-source .venv/bin/activate
-python verify.py           # live audit
-python verify.py --save    # also write debug/*.html and debug/*.csv
-python verify.py --offline # re-parse the saved HTML, no network
-python verify.py --date 2026-08-20   # audit a different day
-```
-
-Read the five sections in order — each one fails differently:
-
-1. **Table detection** — the column map. If `gmp` points at the Est. Listing
-   column, every number below it is wrong and nothing else matters.
-2. **InvestorGain rows** — raw cell → extracted value, with a colour-coded verdict
-   (green = selected, yellow = GMP too low, dim = closes another day, red = parse
-   failure). Compare the row count and a few numbers against the website.
-3. **IPO Watch rows** — same treatment for the second source.
-4. **Fuzzy matching** — every score. Yellow rows are near-misses; if a company you
-   can see on ipowatch.in scores 65–79, lower `FUZZY_THRESHOLD`.
-5. **Message preview** — exactly what WhatsApp would have received.
-
-`--save` also writes CSVs you can open in Numbers/Excel and diff against the site
-side by side, plus the raw HTML for when you need to see what the parser actually
-received.
+* GMP is unofficial grey-market data — a signal to look, not investment advice.
+* Each site is fetched once per run. Please respect their terms of use.

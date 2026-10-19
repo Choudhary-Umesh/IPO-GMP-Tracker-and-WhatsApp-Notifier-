@@ -1,90 +1,222 @@
 name: Daily IPO WhatsApp Alert
 
-on:
-  schedule:
-    # GitHub cron is ALWAYS in UTC. IST = UTC + 5:30.
-    # 07:23 UTC = 12:53 IST. Two deliberate choices here:
-    #   1. A full hour of headroom before the 14:00 IST target, because GitHub's
-    #      shared scheduler delays jobs anywhere from 5 minutes to over an hour.
-    #   2. An odd minute, never :00 or :30 — those are the most congested slots
-    #      on the scheduler and the most likely to be delayed or dropped.
-    - cron: "23 7 * * 1-5"    # Mon-Fri; use "23 7 * * *" for all 7 days
-  workflow_dispatch:          # lets you run it manually from the Actions tab
+# WHY THIS LOOKS THE WAY IT DOES
+# GitHub's shared cron scheduler has no timing guarantee. This repo's own run
+# history (Sep–Oct 2026) shows the old 07:23 UTC (12:53 IST) cron actually
+# starting at 12:16–16:48 UTC = 5:45 PM–10:18 PM IST — never before 2 PM.
+#
+#   PRIMARY  an external scheduler (cron-job.org) calls this workflow's
+#            workflow_dispatch API at 13:30 IST. Dispatch runs start within ~1 min.
+#   BACKUP   several early GitHub crons. Each one waits (in the `gate` job) until
+#            13:40 IST and only sends if nothing was sent today — so if the
+#            primary trigger ever fails, a backup still delivers.
+#   DEDUP    a per-day cache key (`ipo-alert-sent-YYYY-MM-DD`) guarantees at
+#            most one alert per day no matter how many runs fire.
+#
+# README → "Part 4" explains the cron-job.org setup.
 
-# Prevent two runs (e.g. cron + manual) colliding.
-concurrency:
-  group: daily-ipo
-  cancel-in-progress: false
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Who triggered this run (shown in the logs)"
+        type: string
+        default: manual
+      force:
+        description: "Send even if today's alert was already sent"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Build the message but don't send it"
+        type: boolean
+        default: false
+  schedule:
+    # Cron is ALWAYS UTC (IST = UTC+5:30). Odd minutes avoid the congested :00 slot.
+    - cron: "41 0,2,4 * * 1-5"   # 06:11, 08:11, 10:11 IST (Mon–Fri) — backups
+    - cron: "47 7 * * 1-5"       # 13:17 IST — last backup
+
+permissions:
+  contents: read
+
+env:
+  SEND_NOT_BEFORE: "13:40"      # IST time backup runs wait for (primary fires 13:30)
+  BACKUP_MAX_WAIT_MIN: "210"
 
 jobs:
+  # ------------------------------------------------------------------------- #
+  # Backup runs only: wait until SEND_NOT_BEFORE, unless today is already done.
+  # Kept separate from `notify` so a sleeping backup never blocks the primary.
+  # ------------------------------------------------------------------------- #
+  gate:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 225
+    outputs:
+      proceed: ${{ steps.final.outputs.proceed }}
+    steps:
+      - name: Today's date (IST)
+        id: date
+        run: |
+          echo "today=$(TZ=Asia/Kolkata date +%F)" >> "$GITHUB_OUTPUT"
+          echo "Backup run started at $(TZ=Asia/Kolkata date '+%F %T') IST"
+
+      - name: Already sent today?
+        id: sent
+        uses: actions/cache/restore@v5
+        with:
+          path: .state/sent
+          key: ipo-alert-sent-${{ steps.date.outputs.today }}
+          lookup-only: true
+
+      - uses: actions/checkout@v6
+        if: steps.sent.outputs.cache-hit != 'true'
+
+      - name: Wait for the send window
+        id: wait
+        if: steps.sent.outputs.cache-hit != 'true'
+        run: python3 -I scripts/wait_gate.py "$SEND_NOT_BEFORE" "$BACKUP_MAX_WAIT_MIN"
+
+      - name: Decision
+        id: final
+        run: |
+          if [ "${{ steps.sent.outputs.cache-hit }}" = "true" ]; then
+            echo "Today's alert was already sent — backup has nothing to do."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=${{ steps.wait.outputs.proceed }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ------------------------------------------------------------------------- #
   notify:
     name: Scrape GMP data and send WhatsApp
-    runs-on: ubuntu-latest
+    needs: gate
+    if: >-
+      always() &&
+      (needs.gate.result == 'skipped' || needs.gate.outputs.proceed == 'true')
+    # Pinned: ubuntu-latest moves to Ubuntu 26 from 19 Oct 2026, which can break
+    # the headless Chromium used for InvestorGain.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: daily-ipo
+      cancel-in-progress: false
+
+    env:
+      WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER || 'auto' }}
+      FALLBACK_PROVIDER: ${{ vars.FALLBACK_PROVIDER || '' }}
+      META_WA_TOKEN:           ${{ secrets.META_WA_TOKEN }}
+      META_WA_PHONE_NUMBER_ID: ${{ secrets.META_WA_PHONE_NUMBER_ID }}
+      META_WA_TO:              ${{ secrets.META_WA_TO }}
+      META_WA_TEMPLATE:        ${{ vars.META_WA_TEMPLATE || '' }}
+      META_WA_TEMPLATE_LANG:   ${{ vars.META_WA_TEMPLATE_LANG || 'en' }}
+      CALLMEBOT_PHONE:    ${{ secrets.CALLMEBOT_PHONE }}
+      CALLMEBOT_APIKEY:   ${{ secrets.CALLMEBOT_APIKEY }}
+      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+      TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
+      TWILIO_FROM:        ${{ secrets.TWILIO_FROM }}
+      TWILIO_TO:          ${{ secrets.TWILIO_TO }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+      USE_PLAYWRIGHT:        ${{ vars.USE_PLAYWRIGHT || 'false' }}
+      MIN_GMP_PCT_SME:       ${{ vars.MIN_GMP_PCT_SME || '40' }}
+      MIN_GMP_PCT_MAINBOARD: ${{ vars.MIN_GMP_PCT_MAINBOARD || '15' }}
+      FUZZY_THRESHOLD:       ${{ vars.FUZZY_THRESHOLD || '80' }}
+      SEND_WHEN_EMPTY:       ${{ vars.SEND_WHEN_EMPTY || 'true' }}
+      SEND_DEADLINE:         ${{ vars.SEND_DEADLINE || '14:00' }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Run context
+        id: date
+        run: |
+          echo "today=$(TZ=Asia/Kolkata date +%F)" >> "$GITHUB_OUTPUT"
+          echo "Event: ${{ github.event_name }} · source: ${{ inputs.source || 'github-cron' }}"
+          echo "Started at $(TZ=Asia/Kolkata date '+%F %T') IST"
+
+      - name: Already sent today?
+        id: sent
+        uses: actions/cache/restore@v5
+        with:
+          path: .state/sent
+          key: ipo-alert-sent-${{ steps.date.outputs.today }}
+          lookup-only: true
+
+      - name: Decide
+        id: decide
+        run: |
+          if [ "${{ steps.sent.outputs.cache-hit }}" = "true" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "Today's alert was already sent — skipping (use force=true to resend)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.decide.outputs.run == 'true'
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
 
       - name: Install dependencies
+        if: steps.decide.outputs.run == 'true'
         timeout-minutes: 5
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Chromium is ~150MB and its apt dependencies are slow to install, so the
-      # whole browser directory is cached between runs.
       - name: Cache Playwright browsers
-        if: vars.USE_PLAYWRIGHT == 'true'
+        if: steps.decide.outputs.run == 'true' && env.USE_PLAYWRIGHT == 'true'
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium
+          key: playwright-${{ runner.os }}-24.04-chromium-1.47
 
-      # NOTE: deliberately NO "--with-deps". That flag runs apt-get, and when
-      # GitHub's Ubuntu mirrors are slow it can hang for 10+ minutes. The runner
-      # image already ships the shared libraries Chromium needs.
-      - name: Install headless Chromium (only when USE_PLAYWRIGHT is true)
-        if: vars.USE_PLAYWRIGHT == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+      # Deliberately no "--with-deps": that runs apt-get and can hang 10+ min.
+      - name: Install headless Chromium
+        if: >-
+          steps.decide.outputs.run == 'true' && env.USE_PLAYWRIGHT == 'true' &&
+          steps.playwright-cache.outputs.cache-hit != 'true'
         timeout-minutes: 5
         run: python -m playwright install chromium
 
-      - name: Show run time in IST
-        run: TZ=Asia/Kolkata date
+      - name: Provider check (no secrets printed)
+        if: steps.decide.outputs.run == 'true'
+        run: python main.py --check-config
 
       - name: Run IPO pipeline
-        timeout-minutes: 6
-        env:
-          WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER || 'telegram' }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          CALLMEBOT_PHONE:   ${{ secrets.CALLMEBOT_PHONE }}
-          CALLMEBOT_APIKEY:  ${{ secrets.CALLMEBOT_APIKEY }}
-          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-          TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
-          TWILIO_FROM:        ${{ secrets.TWILIO_FROM }}
-          TWILIO_TO:          ${{ secrets.TWILIO_TO }}
-          USE_PLAYWRIGHT:     ${{ vars.USE_PLAYWRIGHT || 'false' }}
-          MIN_GMP_PCT_SME:       ${{ vars.MIN_GMP_PCT_SME || '40' }}
-          MIN_GMP_PCT_MAINBOARD: ${{ vars.MIN_GMP_PCT_MAINBOARD || '15' }}
-          FUZZY_THRESHOLD:    ${{ vars.FUZZY_THRESHOLD || '80' }}
-          SEND_WHEN_EMPTY:    ${{ vars.SEND_WHEN_EMPTY || 'true' }}
-        run: python main.py
+        id: run
+        if: steps.decide.outputs.run == 'true'
+        timeout-minutes: 8
+        run: python main.py ${{ inputs.dry_run && '--dry-run' || '' }}
 
-      - name: Upload debug artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+      - name: Remember that today's alert was sent
+        if: always() && steps.decide.outputs.run == 'true' && hashFiles('.state/sent') != ''
+        uses: actions/cache/save@v5
         with:
-          name: debug-html-${{ github.run_id }}
+          path: .state/sent
+          key: ipo-alert-sent-${{ steps.date.outputs.today }}
+        continue-on-error: true   # a forced resend re-uses an existing key
+
+      # The pipeline already messages you when a data source breaks; this covers
+      # everything else (install failure, crash, delivery failure on all channels).
+      - name: Failure alert
+        if: failure() && steps.run.outputs.reported != 'true'
+        continue-on-error: true
+        run: >-
+          python main.py --alert "❌ IPO alert run failed on $(TZ=Asia/Kolkata date '+%d-%b %H:%M') IST.
+          Check the logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Upload logs and debug files
+        if: always() && steps.decide.outputs.run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: run-${{ github.run_id }}
           path: |
             debug/
             *.db
-          retention-days: 5
+          retention-days: 7
           if-no-files-found: ignore

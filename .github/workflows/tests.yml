@@ -1,0 +1,24 @@
+name: Tests
+
+# Offline test suite (no network, no secrets). Runs on every push / PR so a
+# broken parser or notifier is caught before the 13:30 IST run, not during it.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest -q

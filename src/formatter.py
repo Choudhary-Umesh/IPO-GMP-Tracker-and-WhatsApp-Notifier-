@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Optional
 
-from .config import APP_VERSION, MIN_GMP_PCT_MAINBOARD, MIN_GMP_PCT_SME
+from .config import APP_VERSION, IST, MIN_GMP_PCT_MAINBOARD, MIN_GMP_PCT_SME
 
 SEPARATOR = "---------------------------------"
 
@@ -30,20 +30,29 @@ def build_message(
     rows: list[dict[str, Any]],
     run_date: dt.date,
     run_time: Optional[dt.datetime] = None,
+    *,
+    banner: Optional[str] = None,
+    notes: Optional[list[str]] = None,
 ) -> str:
-    """Render the daily alert. `rows` are SQLite records enriched by Step 2."""
-    stamp = (run_time or dt.datetime.now()).strftime("%H:%M")
+    """Render the daily alert. `rows` are SQLite records enriched by Step 2.
+    `banner` goes on top (e.g. a late-delivery warning); `notes` list data
+    problems (e.g. IPO Watch unavailable) just above the footer."""
+    stamp = (run_time or dt.datetime.now(IST)).astimezone(IST).strftime("%H:%M")
     header = (
         f"📈 IPOs Closing TODAY ({run_date.strftime('%d-%b-%Y')})\n"
         f"Filter: SME above {MIN_GMP_PCT_SME:.0f}% | Mainboard above "
         f"{MIN_GMP_PCT_MAINBOARD:.0f}%"
     )
+    if banner:
+        header = f"{banner}\n\n{header}"
+    note_text = "".join(f"ℹ️ {n}\n" for n in (notes or []))
 
     if not rows:
         return (
             f"{header}\n\n"
             "No IPO closing today crosses its GMP threshold. "
             "Nothing to apply for.\n"
+            f"{note_text}"
             f"{SEPARATOR}\n"
             f"IPO Tracker v{APP_VERSION} · sent {stamp} IST"
         )
@@ -62,6 +71,7 @@ def build_message(
         )
 
     footer = (
+        f"{note_text}"
         "⚠️ Apply before the cut-off (usually 5 PM). GMP is unofficial data.\n"
         f"IPO Tracker v{APP_VERSION} · sent {stamp} IST"
     )

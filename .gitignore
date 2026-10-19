@@ -6,3 +6,5 @@ venv/
 *.db
 debug/
 .DS_Store
+.state/
+.pytest_cache/

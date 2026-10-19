@@ -7,6 +7,15 @@ import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Local runs: pick up a .env file automatically (CI has none, so this is a no-op
+# there). Real environment variables always win over .env values.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+except ImportError:  # python-dotenv is optional
+    pass
+
 # --------------------------------------------------------------------------- #
 # Time
 # --------------------------------------------------------------------------- #
@@ -16,7 +25,8 @@ IST = ZoneInfo("Asia/Kolkata")
 # can always tell which version of the pipeline produced an alert.
 #   v1.0 - single 15% GMP threshold for every IPO
 #   v2.0 - per-type thresholds (SME 40% / Mainboard 15%), cleaned company names
-APP_VERSION = "2.0"
+#   v3.0 - exact-time trigger, WhatsApp-first provider, Meta Cloud API, no silent failures
+APP_VERSION = "3.0"
 
 # --------------------------------------------------------------------------- #
 # Data sources
@@ -72,25 +82,59 @@ IPOWATCH_USE_PLAYWRIGHT = os.getenv("IPOWATCH_USE_PLAYWRIGHT", "false").lower() 
 }
 
 # --------------------------------------------------------------------------- #
-# WhatsApp delivery
+# Delivery
 # --------------------------------------------------------------------------- #
-# "telegram" (most reliable & free), "callmebot" (free WhatsApp, capacity-limited),
-# or "twilio" (WhatsApp sandbox, needs re-joining every 72h)
-WHATSAPP_PROVIDER = os.getenv("WHATSAPP_PROVIDER", "telegram").lower()
+def _env(name: str, default: str = "") -> str:
+    """Env var with surrounding whitespace removed. GitHub passes an unset
+    secret as an empty string, and pasted secrets often carry a trailing
+    newline — both used to cause confusing auth failures."""
+    return (os.getenv(name) or default).strip()
+
+
+# "auto" (default) picks the first provider whose credentials are present, in
+# this order: meta -> callmebot -> twilio -> telegram. Set it explicitly to
+# force one. Only meta / callmebot / twilio deliver to WhatsApp.
+WHATSAPP_PROVIDER = _env("WHATSAPP_PROVIDER", "auto").lower() or "auto"
+
+# Optional second channel, used if the primary provider fails after retries
+# (and for failure alerts). Typically "telegram". Empty = no fallback.
+FALLBACK_PROVIDER = _env("FALLBACK_PROVIDER").lower()
+
+# Meta WhatsApp Cloud API (official). Business-initiated messages need an
+# APPROVED template; plain text only works within 24h of you messaging the
+# business number.
+META_WA_TOKEN = _env("META_WA_TOKEN")                      # permanent system-user token
+META_WA_PHONE_NUMBER_ID = _env("META_WA_PHONE_NUMBER_ID")  # sender's phone-number ID
+META_WA_TO = _env("META_WA_TO")                            # recipient, e.g. 919876543210
+META_WA_TEMPLATE = _env("META_WA_TEMPLATE")                # approved template name
+META_WA_TEMPLATE_LANG = _env("META_WA_TEMPLATE_LANG", "en")
+META_GRAPH_VERSION = _env("META_GRAPH_VERSION", "v23.0")
 
 # Telegram Bot API
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = _env("TELEGRAM_CHAT_ID")
 
 # CallMeBot
-CALLMEBOT_PHONE = os.getenv("CALLMEBOT_PHONE", "")   # e.g. +919876543210
-CALLMEBOT_APIKEY = os.getenv("CALLMEBOT_APIKEY", "")
+CALLMEBOT_PHONE = _env("CALLMEBOT_PHONE")   # e.g. +919876543210
+CALLMEBOT_APIKEY = _env("CALLMEBOT_APIKEY")
 
-# Twilio WhatsApp Sandbox
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM = os.getenv("TWILIO_FROM", "whatsapp:+14155238886")  # sandbox number
-TWILIO_TO = os.getenv("TWILIO_TO", "")                           # whatsapp:+91...
+# Twilio WhatsApp
+TWILIO_ACCOUNT_SID = _env("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = _env("TWILIO_AUTH_TOKEN")
+TWILIO_FROM = _env("TWILIO_FROM", "whatsapp:+14155238886")  # sandbox number
+TWILIO_TO = _env("TWILIO_TO")                               # whatsapp:+91...
 
-# CallMeBot silently truncates very long URLs; split above this many characters.
-MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "900"))
+# CallMeBot silently truncates very long URLs and Meta template parameters are
+# capped at 1024 chars; split above this many characters.
+MAX_MESSAGE_CHARS = int(_env("MAX_MESSAGE_CHARS", "900"))
+SEND_RETRIES = int(_env("SEND_RETRIES", "4"))
+
+# --------------------------------------------------------------------------- #
+# Timing (all IST)
+# --------------------------------------------------------------------------- #
+# The alert must be on your phone by this time. A message sent later than this
+# is still delivered (silence is worse) but carries a "delayed" banner.
+SEND_DEADLINE = _env("SEND_DEADLINE", "14:00")
+# Applications for most IPOs close around 17:00 IST; after this the banner
+# warns that the subscription has probably already closed.
+SUBSCRIPTION_CUTOFF = _env("SUBSCRIPTION_CUTOFF", "17:00")
