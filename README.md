@@ -2,7 +2,12 @@
 
 Every weekday this pipeline scrapes IPO grey-market-premium (GMP) data, keeps only
 the IPOs **closing today** whose GMP clears a threshold, cross-checks them against a
-second site, and sends **one WhatsApp message before 2:00 PM IST**.
+second site, and sends **one message before 2:00 PM IST**.
+
+> **Current channel: Telegram.** CallMeBot's WhatsApp bot was too busy to reply
+> reliably, so alerts go to the existing Telegram bot (`TELEGRAM_BOT_TOKEN`,
+> `TELEGRAM_CHAT_ID` secrets). To switch to WhatsApp later, set the repo variable
+> `NOTIFY_PROVIDER` to `meta`, `callmebot` or `twilio` (see Part 1).
 
 Runs entirely on GitHub Actions — nothing runs on your computer.
 
@@ -113,7 +118,7 @@ Repo → **Settings → Secrets and variables → Actions**.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WHATSAPP_PROVIDER` | `auto` | `auto`, `meta`, `callmebot`, `twilio`, `telegram`. `auto` = first configured of meta → callmebot → twilio → telegram |
+| `NOTIFY_PROVIDER` | `telegram` | `telegram`, `meta`, `callmebot`, `twilio`, or `auto` (= first configured of meta → callmebot → twilio → telegram). Any old `WHATSAPP_PROVIDER` repo variable is ignored. |
 | `FALLBACK_PROVIDER` | — | e.g. `telegram` |
 | `META_WA_TEMPLATE` | — | approved template name (Option B) |
 | `MIN_GMP_PCT_SME` | `40` | SME threshold % |
@@ -123,8 +128,7 @@ Repo → **Settings → Secrets and variables → Actions**.
 | `FUZZY_THRESHOLD` | `80` | name-match strictness |
 | `USE_PLAYWRIGHT` | `false` | `true` if InvestorGain renders its table with JavaScript |
 
-> If you previously set `WHATSAPP_PROVIDER=telegram`, change it to `auto` (or your
-> WhatsApp provider) — otherwise alerts keep going to Telegram.
+> Locally (`.env`) the same setting is called `WHATSAPP_PROVIDER`.
 
 ## Part 3 — Test delivery right now
 
@@ -184,7 +188,9 @@ Exit codes: `0` ok · `1` failed · `3` delivered only via the fallback channel.
 
 | Symptom | Check |
 |---|---|
-| Message arrives on Telegram, not WhatsApp | Provider check step says `selected telegram`. Add WhatsApp secrets; set `WHATSAPP_PROVIDER` to `auto`. |
+| `Provider 'telegram' selected but its secrets are missing` | Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets (README Part 1, Telegram). |
+| Telegram `HTTP 400 chat not found` / `403 bot was blocked` | Wrong `TELEGRAM_CHAT_ID`, or you haven't sent your bot a message yet / blocked it. Open the bot and press Start. |
+| Want WhatsApp instead of Telegram | Add that provider's secrets and set the variable `NOTIFY_PROVIDER`. |
 | No run at 13:30 | cron-job.org job history: 401 = token expired/wrong, 404 = token lacks repo access or wrong URL, 422 = wrong `ref`. |
 | Run says "already sent today" | Dedup. Use **Run workflow → force** to resend. |
 | `Meta WhatsApp rejected … HTTP 401` | Token expired — use a system-user permanent token. |

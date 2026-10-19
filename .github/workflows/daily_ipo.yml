@@ -88,7 +88,7 @@ jobs:
 
   # ------------------------------------------------------------------------- #
   notify:
-    name: Scrape GMP data and send WhatsApp
+    name: Scrape GMP data and send alert
     needs: gate
     if: >-
       always() &&
@@ -102,7 +102,10 @@ jobs:
       cancel-in-progress: false
 
     env:
-      WHATSAPP_PROVIDER: ${{ vars.WHATSAPP_PROVIDER || 'auto' }}
+      # Telegram is the primary channel (CallMeBot rarely replies). A different
+      # repo variable name is used on purpose so an old WHATSAPP_PROVIDER
+      # variable left over from earlier setups cannot override this.
+      WHATSAPP_PROVIDER: ${{ vars.NOTIFY_PROVIDER || 'telegram' }}
       FALLBACK_PROVIDER: ${{ vars.FALLBACK_PROVIDER || '' }}
       META_WA_TOKEN:           ${{ secrets.META_WA_TOKEN }}
       META_WA_PHONE_NUMBER_ID: ${{ secrets.META_WA_PHONE_NUMBER_ID }}
