@@ -175,3 +175,37 @@ def test_ipowatch_can_be_disabled(monkeypatch, sent, today):
     assert main.main([]) == main.EXIT_OK
     assert "IPO Watch GMP: Not listed" in sent[0]
     assert "unavailable" not in sent[0]
+
+
+def test_ipowatch_daily_limit(monkeypatch, sent, today):
+    """5 requests per IST day; the 6th run that day skips IPO Watch with a note."""
+    calls = []
+    freeze(monkeypatch, "13:31")
+    feed(monkeypatch, today)
+    real = ipowatch_scraper.http_get_json
+    monkeypatch.setattr(ipowatch_scraper, "http_get_json",
+                        lambda *a, **k: calls.append(k.get("retries")) or real(*a, **k))
+    monkeypatch.setattr(ipowatch_scraper, "today_ist", lambda: today)
+    monkeypatch.setattr(config, "IPOWATCH_DAILY_LIMIT", 5)
+    for _ in range(6):
+        main.main(["--dry-run"])
+    assert calls == [1] * 5            # exactly 5 requests, never retried
+    assert len(sent) == 6
+    assert all("IPO Watch GMP: ₹54" in m for m in sent[:5])
+    assert "daily limit of 5 requests reached" in sent[5]
+    assert ipowatch_scraper.quota_used(today) == 5
+    # next IST day the counter starts again
+    tomorrow = today + dt.timedelta(days=1)
+    assert ipowatch_scraper.quota_used(tomorrow) == 0
+
+
+def test_ipowatch_limit_note_in_message(monkeypatch, sent, today):
+    freeze(monkeypatch, "13:31")
+    feed(monkeypatch, today)
+    monkeypatch.setattr(ipowatch_scraper, "today_ist", lambda: today)
+    monkeypatch.setattr(config, "IPOWATCH_DAILY_LIMIT", 1)
+    Path(".state").mkdir(exist_ok=True)
+    Path(".state/ipowatch_quota").write_text(f"{today.isoformat()} 1\n")
+    assert main.main([]) == main.EXIT_OK
+    assert "IPO Watch skipped: daily limit of 1 requests reached." in sent[0]
+    assert "Alpha Cement Industries Ltd" in sent[0]

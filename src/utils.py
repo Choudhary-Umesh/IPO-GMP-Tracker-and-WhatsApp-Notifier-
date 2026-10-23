@@ -70,14 +70,15 @@ def http_get(url: str, *, headers: Optional[dict] = None, retries: int = HTTP_RE
     raise RuntimeError(f"Could not fetch {url} after {retries} attempts") from last_error
 
 
-def http_get_json(url: str, *, referer: Optional[str] = None) -> object:
-    """GET a JSON endpoint (with the same retries as http_get) and decode it."""
+def http_get_json(url: str, *, referer: Optional[str] = None,
+                  retries: int = HTTP_RETRIES) -> object:
+    """GET a JSON endpoint (with retries like http_get) and decode it."""
     import json
 
     headers = {"Accept": "application/json, text/plain, */*"}
     if referer:
         headers["Referer"] = referer
-    text = http_get(url, headers=headers)
+    text = http_get(url, headers=headers, retries=retries)
     try:
         return json.loads(text)
     except ValueError as exc:

@@ -16,11 +16,13 @@ from typing import Any, Optional
 from bs4 import BeautifulSoup
 
 from . import db
+from . import config as cfg
 from .config import FUZZY_THRESHOLD, IPOWATCH_API_URL, IPOWATCH_URL
 from .utils import (
     clean_display_name,
     compute_gmp_pct,
     http_get_json,
+    today_ist,
     normalize_name,
     parse_amount,
     parse_percent,
@@ -32,6 +34,40 @@ log = logging.getLogger(__name__)
 
 class SourceUnavailable(RuntimeError):
     """IPO Watch could not be used today; the pipeline continues without it."""
+
+
+class QuotaExceeded(SourceUnavailable):
+    """Today's IPO Watch request limit (IPOWATCH_DAILY_LIMIT) is used up."""
+
+
+# --------------------------------------------------------------------------- #
+# Daily request quota
+# --------------------------------------------------------------------------- #
+
+
+def quota_used(day=None) -> int:
+    """Requests already made to ipowatch.live on `day` (IST), from the quota file."""
+    day = (day or today_ist()).isoformat()
+    try:
+        saved_day, count = cfg.IPOWATCH_QUOTA_FILE.read_text().split()[:2]
+        return int(count) if saved_day == day else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def _take_quota() -> int:
+    """Reserve one request, or raise QuotaExceeded. Returns the new count.
+    The slot is recorded *before* the request so a crash mid-request still counts."""
+    limit = cfg.IPOWATCH_DAILY_LIMIT
+    used = quota_used()
+    if limit > 0 and used >= limit:
+        raise QuotaExceeded(f"IPO Watch daily limit reached ({used}/{limit} requests today)")
+    used += 1
+    path = cfg.IPOWATCH_QUOTA_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{today_ist().isoformat()} {used}\n")
+    log.info("IPO Watch request %s/%s today", used, limit if limit > 0 else "∞")
+    return used
 
 try:
     from rapidfuzz import fuzz as _fuzz
@@ -202,8 +238,11 @@ def parse_api(payload: Any) -> list[dict[str, Any]]:
 
 
 def fetch_entries() -> list[dict[str, Any]]:
-    """One GET to ipowatch.live's JSON endpoint -> parsed entries."""
-    return parse_api(http_get_json(IPOWATCH_API_URL, referer=IPOWATCH_URL))
+    """Exactly one GET to ipowatch.live's JSON endpoint -> parsed entries.
+    Counts against IPOWATCH_DAILY_LIMIT and is never retried, so one call is
+    always one request."""
+    _take_quota()
+    return parse_api(http_get_json(IPOWATCH_API_URL, referer=IPOWATCH_URL, retries=1))
 
 
 def best_match(
@@ -239,6 +278,8 @@ def run(*, persist: bool = True) -> list[dict[str, Any]]:
     # alert must still go out with InvestorGain data alone.
     try:
         entries = fetch_entries()
+    except QuotaExceeded:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise SourceUnavailable(f"IPO Watch unavailable: {exc}") from exc
     if not entries:

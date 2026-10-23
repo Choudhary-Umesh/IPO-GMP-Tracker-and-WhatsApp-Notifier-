@@ -127,6 +127,7 @@ Repo → **Settings → Secrets and variables → Actions**.
 | `SEND_DEADLINE` | `14:00` | later than this, the message gets a "delayed" banner |
 | `FUZZY_THRESHOLD` | `80` | name-match strictness |
 | `IPOWATCH_ENABLED` | `true` | `false` skips the IPO Watch cross-check |
+| `IPOWATCH_DAILY_LIMIT` | `5` | Max requests to ipowatch.live per IST day across all runs (cron, cron-job.org, manual, dry-run, `verify.py`). The 6th run that day sends the alert without IPO Watch and says so. `0` = no limit. |
 | `USE_PLAYWRIGHT` | `false` | `true` renders InvestorGain in headless Chromium (needed: its table is built by JavaScript; currently set to `true`). IPO Watch never needs it. |
 
 > Locally (`.env`) the same setting is called `WHATSAPP_PROVIDER`.
@@ -212,5 +213,6 @@ Exit codes: `0` ok · `1` failed · `3` delivered only via the fallback channel.
   rendered from the JSON endpoint `GET /server/api/ipo/GetIpoGMPHistory`, which the
   pipeline reads directly (one request per run, no headless browser). Note that
   ipowatch.live's `robots.txt` disallows all automated access (`Disallow: /`); it is
-  used here at the owner's choice for personal, once-a-day use. Set the
+  used here at the owner's choice for personal use, capped at
+  `IPOWATCH_DAILY_LIMIT` (default 5) requests per day, each sent once with no retry. Set the
   repo variable `IPOWATCH_ENABLED=false` to stop using it.

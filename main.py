@@ -165,6 +165,11 @@ def run_pipeline(args: argparse.Namespace) -> int:
             matched = sum(1 for r in results if r["match"])
             log.info("STEP 2 complete: %s/%s matched on IPO Watch", matched, len(results))
             gh_annotate("notice", "IPO Watch", f"matched {matched}/{len(results)} candidate(s)")
+        except ipowatch_scraper.QuotaExceeded as exc:
+            log.warning("STEP 2 skipped: %s", exc)
+            gh_annotate("warning", "IPO Watch limit", str(exc))
+            notes.append(f"IPO Watch skipped: daily limit of {config.IPOWATCH_DAILY_LIMIT} "
+                         "requests reached.")
         except ipowatch_scraper.SourceUnavailable as exc:
             log.warning("STEP 2 skipped: %s", exc)
             gh_annotate("warning", "IPO Watch unavailable", str(exc)[:300])

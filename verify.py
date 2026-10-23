@@ -93,7 +93,12 @@ def load_ipowatch(*, offline: bool, save: bool) -> list[dict[str, Any]]:
         print(f"{DIM}Reading saved JSON from {path}{RESET}")
         payload = json.loads(path.read_text(encoding="utf-8"))
     else:
-        payload = http_get_json(IPOWATCH_API_URL, referer=IPOWATCH_URL)
+        try:
+            used = iw._take_quota()  # counts toward IPOWATCH_DAILY_LIMIT
+        except iw.QuotaExceeded as exc:
+            sys.exit(f"{RED}{exc}. Use --offline to re-check saved data.{RESET}")
+        print(f"{DIM}IPO Watch request {used} of today's limit{RESET}")
+        payload = http_get_json(IPOWATCH_API_URL, referer=IPOWATCH_URL, retries=1)
         print(f"{DIM}Fetched IPO Watch API {IPOWATCH_API_URL}{RESET}")
         if save:
             DEBUG_DIR.mkdir(parents=True, exist_ok=True)

@@ -122,6 +122,7 @@ jobs:
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
       USE_PLAYWRIGHT:        ${{ vars.USE_PLAYWRIGHT || 'false' }}
       IPOWATCH_ENABLED:      ${{ vars.IPOWATCH_ENABLED || 'true' }}
+      IPOWATCH_DAILY_LIMIT:  ${{ vars.IPOWATCH_DAILY_LIMIT || '5' }}
       MIN_GMP_PCT_SME:       ${{ vars.MIN_GMP_PCT_SME || '40' }}
       MIN_GMP_PCT_MAINBOARD: ${{ vars.MIN_GMP_PCT_MAINBOARD || '15' }}
       FUZZY_THRESHOLD:       ${{ vars.FUZZY_THRESHOLD || '80' }}
@@ -191,6 +192,17 @@ jobs:
         if: steps.decide.outputs.run == 'true'
         run: python main.py --check-config
 
+      # IPO Watch request counter (max IPOWATCH_DAILY_LIMIT per IST day). Every run
+      # restores the newest counter saved today and saves an updated copy, so the
+      # limit holds across cron, cron-job.org and manual test runs.
+      - name: Restore today's IPO Watch request count
+        if: steps.decide.outputs.run == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: .state/ipowatch_quota
+          key: ipowatch-quota-${{ steps.date.outputs.today }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ipowatch-quota-${{ steps.date.outputs.today }}-
+
       - name: Run IPO pipeline
         id: run
         if: steps.decide.outputs.run == 'true'
@@ -204,6 +216,14 @@ jobs:
           path: .state/sent
           key: ipo-alert-sent-${{ steps.date.outputs.today }}
         continue-on-error: true   # a forced resend re-uses an existing key
+
+      - name: Save today's IPO Watch request count
+        if: always() && steps.decide.outputs.run == 'true' && hashFiles('.state/ipowatch_quota') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: .state/ipowatch_quota
+          key: ipowatch-quota-${{ steps.date.outputs.today }}-${{ github.run_id }}-${{ github.run_attempt }}
+        continue-on-error: true
 
       # The pipeline already messages you when a data source breaks; this covers
       # everything else (install failure, crash, delivery failure on all channels).

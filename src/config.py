@@ -45,6 +45,11 @@ IPOWATCH_API_URL = os.getenv(
 )
 # Set IPOWATCH_ENABLED=false to skip the IPO Watch cross-check entirely.
 IPOWATCH_ENABLED = os.getenv("IPOWATCH_ENABLED", "true").lower() in {"1", "true", "yes"}
+# At most this many requests to ipowatch.live per IST day (0 = no limit). The
+# count lives in IPOWATCH_QUOTA_FILE, which the workflow carries between runs
+# via the Actions cache, so manual test runs can't hammer the site.
+IPOWATCH_DAILY_LIMIT = int(os.getenv("IPOWATCH_DAILY_LIMIT", "5") or 0)
+IPOWATCH_QUOTA_FILE = Path(os.getenv("IPOWATCH_QUOTA_FILE", ".state/ipowatch_quota"))
 
 # --------------------------------------------------------------------------- #
 # Business rules
