@@ -27,13 +27,13 @@ from src.config import (
     DEBUG_DIR,
     FUZZY_THRESHOLD,
     INVESTORGAIN_URL,
+    IPOWATCH_API_URL,
     IPOWATCH_URL,
-    IPOWATCH_USE_PLAYWRIGHT,
     MIN_GMP_PCT_MAINBOARD,
     MIN_GMP_PCT_SME,
 )
 from src.formatter import build_message
-from src.utils import fetch_html, today_ist
+from src.utils import fetch_html, http_get_json, today_ist
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (
     "\033[92m", "\033[91m", "\033[93m", "\033[2m", "\033[1m", "\033[0m"
@@ -80,6 +80,26 @@ def load_html(name: str, url: str, *, offline: bool, save: bool,
         path.write_text(html, encoding="utf-8")
         print(f"{DIM}Saved raw HTML to {path} — open it in a browser to inspect{RESET}")
     return html
+
+
+def load_ipowatch(*, offline: bool, save: bool) -> list[dict[str, Any]]:
+    """IPO Watch rows from its JSON API (or the copy saved by --save)."""
+    import json
+
+    path = DEBUG_DIR / "ipowatch.json"
+    if offline:
+        if not path.exists():
+            sys.exit(f"{RED}No saved JSON at {path}. Run once with --save first.{RESET}")
+        print(f"{DIM}Reading saved JSON from {path}{RESET}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        payload = http_get_json(IPOWATCH_API_URL, referer=IPOWATCH_URL)
+        print(f"{DIM}Fetched IPO Watch API {IPOWATCH_API_URL}{RESET}")
+        if save:
+            DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"{DIM}Saved raw JSON to {path}{RESET}")
+    return iw.parse_api(payload)
 
 
 def write_csv(name: str, rows: list[dict[str, Any]], fields: list[str]) -> None:
@@ -194,9 +214,8 @@ def audit_investorgain(html: str, target: dt.date) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def audit_ipowatch(html: str, selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    entries = iw.parse_entries(html)
-
+def audit_ipowatch(entries: list[dict[str, Any]],
+                   selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
     title(f"3. IPO WATCH — all {len(entries)} rows parsed")
     print(f"{'Company':<38}{'GMP cell':<14}{'→Used':<9}{'Price':<10}{'Gain%'}")
     print(hr("·"))
@@ -227,7 +246,7 @@ def audit_ipowatch(html: str, selected: list[dict[str, Any]]) -> list[dict[str, 
             f"{score:<8.1f}{result}{RESET}"
         )
 
-    print(f"\n{BOLD}CHECK:{RESET} every yellow row is a name that IS on ipowatch.in but")
+    print(f"\n{BOLD}CHECK:{RESET} every yellow row is a name that IS on ipowatch.live but")
     print("scored too low. Lower FUZZY_THRESHOLD if you see these repeatedly.")
     return entries
 
@@ -285,9 +304,7 @@ def main() -> int:
                   ["name", "raw_price", "issue_price", "raw_gmp", "ig_gmp",
                    "ig_gmp_pct", "raw_close", "close_date"])
 
-    iw_html = load_html("ipowatch", IPOWATCH_URL, offline=args.offline, save=args.save,
-                        use_browser=IPOWATCH_USE_PLAYWRIGHT)
-    entries = audit_ipowatch(iw_html, selected)
+    entries = audit_ipowatch(load_ipowatch(offline=args.offline, save=args.save), selected)
     if args.save:
         write_csv("ipowatch", entries,
                   ["name", "raw_gmp", "gmp", "raw_price", "price", "gmp_pct"])

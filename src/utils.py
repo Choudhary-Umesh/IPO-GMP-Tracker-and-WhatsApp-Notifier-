@@ -70,6 +70,20 @@ def http_get(url: str, *, headers: Optional[dict] = None, retries: int = HTTP_RE
     raise RuntimeError(f"Could not fetch {url} after {retries} attempts") from last_error
 
 
+def http_get_json(url: str, *, referer: Optional[str] = None) -> object:
+    """GET a JSON endpoint (with the same retries as http_get) and decode it."""
+    import json
+
+    headers = {"Accept": "application/json, text/plain, */*"}
+    if referer:
+        headers["Referer"] = referer
+    text = http_get(url, headers=headers)
+    try:
+        return json.loads(text)
+    except ValueError as exc:
+        raise RuntimeError(f"{url} did not return JSON: {text[:200]!r}") from exc
+
+
 def fetch_html(url: str, *, use_browser: Optional[bool] = None) -> str:
     """Fetch a page. `use_browser` overrides the global USE_PLAYWRIGHT flag, so a
     site that renders fine with plain HTTP is never routed through Chromium."""

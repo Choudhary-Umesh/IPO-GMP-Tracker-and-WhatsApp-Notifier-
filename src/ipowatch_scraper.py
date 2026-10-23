@@ -1,7 +1,7 @@
 """STEP 2 — Cross-validation.
 
-Reads the company names Step 1 stored in SQLite, scrapes every GMP row from
-IPO Watch, then fuzzy-matches the two name sets (the sites format names
+Reads the company names Step 1 stored in SQLite, reads every GMP row from
+IPO Watch (ipowatch.live's JSON endpoint), then fuzzy-matches the two name sets (the sites format names
 differently: 'Acme Industries Ltd IPO (SME)' vs 'Acme Industries IPO').
 
 rapidfuzz is used when available (fast, wheel-only, no compiler); difflib from
@@ -16,12 +16,11 @@ from typing import Any, Optional
 from bs4 import BeautifulSoup
 
 from . import db
-from .config import FUZZY_THRESHOLD, IPOWATCH_URL, IPOWATCH_USE_PLAYWRIGHT
+from .config import FUZZY_THRESHOLD, IPOWATCH_API_URL, IPOWATCH_URL
 from .utils import (
     clean_display_name,
     compute_gmp_pct,
-    dump_debug_html,
-    fetch_html,
+    http_get_json,
     normalize_name,
     parse_amount,
     parse_percent,
@@ -95,7 +94,9 @@ def _map_columns(headers: list[str]) -> dict[str, int]:
 
 
 def parse_entries(html: str) -> list[dict[str, Any]]:
-    """Extract every (name, gmp, price) triple from all GMP tables on the page."""
+    """Extract every (name, gmp, price) triple from HTML GMP tables.
+    Generic fallback for a server-rendered GMP page; the live pipeline uses
+    parse_api() because ipowatch.live renders its table with JavaScript."""
     soup = BeautifulSoup(html, "lxml")
     entries: list[dict[str, Any]] = []
 
@@ -155,6 +156,56 @@ def parse_entries(html: str) -> list[dict[str, Any]]:
     return unique
 
 
+def parse_api(payload: Any) -> list[dict[str, Any]]:
+    """Turn ipowatch.live's GetIpoGMPHistory JSON into match entries.
+
+    Shape (Oct 2026): {"status":..., "result": [{"ipoName": "BLS Polymers",
+    "Type": "Mainboard", "priceBand": "₹142 - ₹150", "ipoGmp": "₹30",
+    "estListing": "₹180 (20.00%)", "IPODate": "27-29 October",
+    "Status": "Upcoming", "LastUpdated": "22 October, 14:55", ...}, ...]}"""
+    if not isinstance(payload, dict) or not isinstance(payload.get("result"), list):
+        raise ValueError(f"Unexpected IPO Watch API shape: {str(payload)[:200]}")
+
+    entries: list[dict[str, Any]] = []
+    for row in payload["result"]:
+        if not isinstance(row, dict):
+            continue
+        raw_name = str(row.get("ipoName") or "").strip()
+        if len(raw_name) < 3:
+            continue
+        raw_gmp = str(row.get("ipoGmp") or "")
+        raw_price = str(row.get("priceBand") or "")
+        raw_est = str(row.get("estListing") or "")
+        gmp = parse_amount(raw_gmp)
+        price = parse_upper_price(raw_price)
+        gmp_pct = parse_percent(raw_est)
+        if gmp_pct is None:
+            gmp_pct = compute_gmp_pct(gmp, price)
+        entries.append(
+            {
+                "name": clean_display_name(raw_name),
+                "raw_name": raw_name,
+                "normalized_name": normalize_name(raw_name),
+                "gmp": gmp,
+                "price": price,
+                "gmp_pct": gmp_pct,
+                "raw_gmp": raw_gmp,
+                "raw_price": raw_price,
+                "type": row.get("Type"),
+                "dates": row.get("IPODate"),
+                "status": row.get("Status"),
+                "updated": row.get("LastUpdated"),
+            }
+        )
+    log.info("Parsed %s IPO row(s) from the IPO Watch API", len(entries))
+    return entries
+
+
+def fetch_entries() -> list[dict[str, Any]]:
+    """One GET to ipowatch.live's JSON endpoint -> parsed entries."""
+    return parse_api(http_get_json(IPOWATCH_API_URL, referer=IPOWATCH_URL))
+
+
 def best_match(
     normalized_name: str,
     entries: list[dict[str, Any]],
@@ -184,18 +235,14 @@ def run(*, persist: bool = True) -> list[dict[str, Any]]:
         return []
 
     log.info("Cross-validating %s candidate(s) using %s", len(candidates), _MATCHER)
-    # IPO Watch is server-rendered plain HTML. It is also ad-heavy, which makes a
-    # headless browser hang, so it always uses plain HTTP regardless of USE_PLAYWRIGHT.
-    # IPO Watch is only a cross-check: if it is down or its layout changed, the
+    # IPO Watch is only a cross-check: if it is down or its API changed, the
     # alert must still go out with InvestorGain data alone.
     try:
-        html = fetch_html(IPOWATCH_URL, use_browser=IPOWATCH_USE_PLAYWRIGHT)
-        entries = parse_entries(html)
+        entries = fetch_entries()
     except Exception as exc:  # noqa: BLE001
         raise SourceUnavailable(f"IPO Watch unavailable: {exc}") from exc
     if not entries:
-        dump_debug_html("ipowatch_empty", html)
-        raise SourceUnavailable("IPO Watch returned no parsable rows (layout change?)")
+        raise SourceUnavailable("IPO Watch API returned no IPO rows")
 
     results: list[dict[str, Any]] = []
     for ipo_id, name, norm in candidates:

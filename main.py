@@ -86,6 +86,13 @@ def gh_output(key: str, value: str) -> None:
             fh.write(f"{key}={value}\n")
 
 
+def gh_annotate(level: str, title: str, text: str) -> None:
+    """Show a one-line notice/warning on the GitHub Actions run page."""
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        clean = text.replace("%", "%25").replace("\r", "").replace("\n", " ")
+        print(f"::{level} title={title}::{clean}", flush=True)
+
+
 def gh_summary(text: str) -> None:
     path = os.getenv("GITHUB_STEP_SUMMARY")
     if path:
@@ -147,14 +154,20 @@ def run_pipeline(args: argparse.Namespace) -> int:
         gh_summary(f"### ❌ Step 1 failed\n```\n{exc}\n```")
         return EXIT_FAIL
     log.info("STEP 1 complete: %s candidate(s)", len(candidates))
+    gh_annotate("notice", "InvestorGain", f"{len(candidates)} IPO(s) closing {run_date} above threshold")
 
     # ------------------------------------------------------------ Step 2
-    if candidates:
+    if candidates and not config.IPOWATCH_ENABLED:
+        log.info("STEP 2 skipped: IPOWATCH_ENABLED is false")
+    elif candidates:
         try:
-            ipowatch_scraper.run()
-            log.info("STEP 2 complete")
+            results = ipowatch_scraper.run()
+            matched = sum(1 for r in results if r["match"])
+            log.info("STEP 2 complete: %s/%s matched on IPO Watch", matched, len(results))
+            gh_annotate("notice", "IPO Watch", f"matched {matched}/{len(results)} candidate(s)")
         except ipowatch_scraper.SourceUnavailable as exc:
             log.warning("STEP 2 skipped: %s", exc)
+            gh_annotate("warning", "IPO Watch unavailable", str(exc)[:300])
             notes.append("IPO Watch cross-check unavailable today.")
 
     rows = db.get_candidates()

@@ -37,7 +37,7 @@ Runs entirely on GitHub Actions — nothing runs on your computer.
                                                   ▼
                        notify job  (one at a time · skip if today already sent)
    STEP 1  investorgain.com  → close date == today (IST) AND GMP% > threshold → SQLite
-   STEP 2  ipowatch.in       → fuzzy-match names → enrich SQLite (optional; failure ≠ fatal)
+   STEP 2  ipowatch.live API → fuzzy-match names → enrich SQLite (optional; failure ≠ fatal)
    STEP 3  build message     → WhatsApp (Meta / CallMeBot / Twilio) → fallback channel
            mark today as sent · step summary · logs uploaded as artifact
            on failure → alert message with the run link
@@ -54,7 +54,7 @@ Runs entirely on GitHub Actions — nothing runs on your computer.
 │   ├── config.py            # every setting comes from env vars / .env
 │   ├── timing.py            # send window, backup gate, late banner (pure functions)
 │   ├── investorgain_scraper.py   # STEP 1
-│   ├── ipowatch_scraper.py       # STEP 2
+│   ├── ipowatch_scraper.py       # STEP 2 (ipowatch.live JSON API)
 │   ├── formatter.py              # message layout
 │   ├── notifier.py               # STEP 3: providers, retry, fallback
 │   ├── db.py · utils.py
@@ -126,7 +126,8 @@ Repo → **Settings → Secrets and variables → Actions**.
 | `SEND_WHEN_EMPTY` | `true` | send a "nothing today" message so you know it ran |
 | `SEND_DEADLINE` | `14:00` | later than this, the message gets a "delayed" banner |
 | `FUZZY_THRESHOLD` | `80` | name-match strictness |
-| `USE_PLAYWRIGHT` | `false` | `true` if InvestorGain renders its table with JavaScript |
+| `IPOWATCH_ENABLED` | `true` | `false` skips the IPO Watch cross-check |
+| `USE_PLAYWRIGHT` | `false` | `true` renders InvestorGain in headless Chromium (needed: its table is built by JavaScript; currently set to `true`). IPO Watch never needs it. |
 
 > Locally (`.env`) the same setting is called `WHATSAPP_PROVIDER`.
 
@@ -197,7 +198,7 @@ Exit codes: `0` ok · `1` failed · `3` delivered only via the fallback channel.
 | Meta accepted but nothing arrived | Template not approved/paused, wrong language code, or (test number) recipient not verified. Without `META_WA_TEMPLATE`, text is only delivered within 24 h of you messaging the business number. |
 | `CallMeBot rejected the message: APIKey is invalid` | Redo the CallMeBot activation; phone must include `+91`. |
 | "InvestorGain could not be read" message | Site down or layout changed. Download the `run-<id>` artifact (logs + HTML). If the table is missing from the HTML, set `USE_PLAYWRIGHT=true`. |
-| "IPO Watch cross-check unavailable" | Second source failed; InvestorGain data was still sent. |
+| "IPO Watch cross-check unavailable" | ipowatch.live API failed or changed shape; InvestorGain data was still sent. Check `https://ipowatch.live/server/api/ipo/GetIpoGMPHistory` in a browser; run `python verify.py --save` to see what was parsed. |
 | Schedules stopped after ~2 months | GitHub disables schedules in idle repos; keep `keepalive.yml` enabled. |
 
 ---
@@ -206,3 +207,10 @@ Exit codes: `0` ok · `1` failed · `3` delivered only via the fallback channel.
 
 * GMP is unofficial grey-market data — a signal to look, not investment advice.
 * Each site is fetched once per run. Please respect their terms of use.
+* **Sources.** InvestorGain is the primary source (its `robots.txt` allows crawling).
+  IPO Watch moved from ipowatch.in to **ipowatch.live** in Oct 2026; its GMP table is
+  rendered from the JSON endpoint `GET /server/api/ipo/GetIpoGMPHistory`, which the
+  pipeline reads directly (one request per run, no headless browser). Note that
+  ipowatch.live's `robots.txt` disallows all automated access (`Disallow: /`); it is
+  used here at the owner's choice for personal, once-a-day use. Set the
+  repo variable `IPOWATCH_ENABLED=false` to stop using it.

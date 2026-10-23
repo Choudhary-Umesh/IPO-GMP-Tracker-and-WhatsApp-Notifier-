@@ -54,6 +54,27 @@ IW_HTML = """
 """
 
 
+# Shape of ipowatch.live's GetIpoGMPHistory response (captured Oct 2026).
+IW_API = {
+    "status": True, "message": "", "jwtToken": None, "totalCount": 4, "id": 0,
+    "result": [
+        {"id": 1, "ipoName": "Alpha Cement", "ipo_slug": "alpha-cement-ipo", "ipoGmp": "₹54",
+         "priceBand": "₹100 - ₹114", "estListing": "₹168 (47.37%)", "IPODate": "17-19 October",
+         "Type": "BSE BSE SME", "Status": "Open", "LastUpdated": "19 October, 12:10",
+         "trendIcon": "fa-arrow-up", "trendColor": "#28A745"},
+        {"id": 2, "ipoName": "Delta Pharma", "ipo_slug": "delta-pharma-ipo", "ipoGmp": "₹240",
+         "priceBand": "₹1028 - ₹1080", "estListing": "₹1320 (22.22%)", "IPODate": "15-19 October",
+         "Type": "Mainboard", "Status": "Open", "LastUpdated": "19 October, 11:05",
+         "trendIcon": "fa-arrow-right", "trendColor": "#FFC107"},
+        {"id": 3, "ipoName": "Zeta Textiles", "ipo_slug": "zeta-textiles-ipo", "ipoGmp": "₹0",
+         "priceBand": "₹55 - ₹60", "estListing": "₹- (-%)", "IPODate": "27-29 October",
+         "Type": "Mainboard", "Status": "Upcoming", "LastUpdated": "19 October, 10:00",
+         "trendIcon": "fa-arrow-right", "trendColor": "#FFC107"},
+        {"id": 4, "ipoName": "", "ipoGmp": "₹5"},
+    ],
+}
+
+
 @pytest.fixture
 def today():
     return dt.date(2026, 10, 19)  # a Monday

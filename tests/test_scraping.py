@@ -4,7 +4,7 @@ from src import investorgain_scraper as ig
 from src import ipowatch_scraper as iw
 from src.formatter import build_message
 
-from .conftest import IW_HTML, ig_html
+from .conftest import IW_API, IW_HTML, ig_html
 
 
 def test_investorgain_parses_every_row(today):
@@ -51,3 +51,39 @@ def test_message_layout_with_banner_and_notes(today):
 def test_empty_day_message(today):
     msg = build_message([], today)
     assert "Nothing to apply for" in msg
+
+
+def test_ipowatch_api_parsing():
+    entries = iw.parse_api(IW_API)
+    assert [e["name"] for e in entries] == ["Alpha Cement", "Delta Pharma", "Zeta Textiles"]
+    alpha, delta, zeta = entries
+    assert alpha["gmp"] == 54 and alpha["price"] == 114 and alpha["gmp_pct"] == 47.37
+    assert delta["gmp_pct"] == 22.22
+    assert zeta["gmp"] == 0 and zeta["gmp_pct"] == 0.0  # "₹- (-%)" -> computed 0%
+    match, score = iw.best_match("alpha cement industries", entries)
+    assert match["name"] == "Alpha Cement" and score >= 80
+
+
+def test_ipowatch_api_bad_shape_is_an_error():
+    import pytest
+
+    with pytest.raises(ValueError):
+        iw.parse_api({"status": False, "message": "maintenance"})
+
+
+def test_ipowatch_live_real_response():
+    """Real ipowatch.live response captured 23 Oct 2026, matched against the
+    names InvestorGain prints (with its exchange tag and status badge)."""
+    import json
+    from pathlib import Path
+
+    from src.utils import normalize_name
+
+    payload = json.loads(
+        (Path(__file__).parent / "fixtures/ipowatch_live_2026-10-23.json").read_text("utf-8"))
+    entries = iw.parse_api(payload)
+    assert len(entries) == 7
+    jio, _ = iw.best_match(normalize_name("Jio Platforms IPO O"), entries)
+    assert jio["gmp"] == 245 and jio["price"] == 1119 and jio["gmp_pct"] == 21.89
+    core4, _ = iw.best_match(normalize_name("Core4 Engineers BSE SME O"), entries)
+    assert core4["name"] == "Core4 Engineers"

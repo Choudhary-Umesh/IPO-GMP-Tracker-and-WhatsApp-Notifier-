@@ -10,7 +10,7 @@ import pytest
 import main
 from src import config, investorgain_scraper, ipowatch_scraper, notifier, timing
 
-from .conftest import IST, IW_HTML, ig_html
+from .conftest import IST, IW_API, ig_html
 
 WORKFLOW = Path(__file__).resolve().parent.parent / ".github/workflows/daily_ipo.yml"
 
@@ -45,10 +45,10 @@ def feed(monkeypatch, today, *, ig=None, iw=None):
     def iw_fetch(url, **_):
         if isinstance(iw, Exception):
             raise iw
-        return iw if iw is not None else IW_HTML
+        return iw if iw is not None else IW_API
 
     monkeypatch.setattr(investorgain_scraper, "fetch_html", ig_fetch)
-    monkeypatch.setattr(ipowatch_scraper, "fetch_html", iw_fetch)
+    monkeypatch.setattr(ipowatch_scraper, "http_get_json", iw_fetch)
 
 
 # --------------------------------------------------------------- happy path
@@ -159,3 +159,19 @@ def test_workflow_crons_are_weekday_mornings_ist():
 
 def test_config_reads_send_deadline_default():
     assert config.SEND_DEADLINE == "14:00"
+
+
+def test_ipowatch_api_change_degrades_gracefully(monkeypatch, sent, today):
+    freeze(monkeypatch, "13:31")
+    feed(monkeypatch, today, iw={"status": False, "message": "changed"})
+    assert main.main([]) == main.EXIT_OK
+    assert "IPO Watch cross-check unavailable today" in sent[0]
+
+
+def test_ipowatch_can_be_disabled(monkeypatch, sent, today):
+    freeze(monkeypatch, "13:31")
+    feed(monkeypatch, today, iw=AssertionError("IPO Watch must not be called"))
+    monkeypatch.setattr(config, "IPOWATCH_ENABLED", False)
+    assert main.main([]) == main.EXIT_OK
+    assert "IPO Watch GMP: Not listed" in sent[0]
+    assert "unavailable" not in sent[0]

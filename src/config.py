@@ -34,9 +34,17 @@ APP_VERSION = "3.0"
 INVESTORGAIN_URL = os.getenv(
     "INVESTORGAIN_URL", "https://www.investorgain.com/report/ipo-gmp-live/331/"
 )
+# IPO Watch moved to ipowatch.live (Oct 2026). Its GMP table is rendered in the
+# browser from this JSON endpoint, so we read the JSON directly: one small GET,
+# no headless browser needed. IPOWATCH_URL is the human-facing page.
 IPOWATCH_URL = os.getenv(
-    "IPOWATCH_URL", "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
+    "IPOWATCH_URL", "https://ipowatch.live/ipo-grey-market-premium-latest-ipo-gmp"
 )
+IPOWATCH_API_URL = os.getenv(
+    "IPOWATCH_API_URL", "https://ipowatch.live/server/api/ipo/GetIpoGMPHistory"
+)
+# Set IPOWATCH_ENABLED=false to skip the IPO Watch cross-check entirely.
+IPOWATCH_ENABLED = os.getenv("IPOWATCH_ENABLED", "true").lower() in {"1", "true", "yes"}
 
 # --------------------------------------------------------------------------- #
 # Business rules
@@ -73,13 +81,9 @@ USER_AGENT = os.getenv(
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 )
 
-# Set USE_PLAYWRIGHT=true only if a site starts rendering its table via JS.
-# InvestorGain needs this; IPO Watch does not (and hangs a headless browser
-# because its ad scripts never go idle), so it has its own opt-in flag.
+# USE_PLAYWRIGHT=true renders InvestorGain in headless Chromium (its table is
+# built by JavaScript). IPO Watch never needs it: its data comes from a JSON API.
 USE_PLAYWRIGHT = os.getenv("USE_PLAYWRIGHT", "false").lower() in {"1", "true", "yes"}
-IPOWATCH_USE_PLAYWRIGHT = os.getenv("IPOWATCH_USE_PLAYWRIGHT", "false").lower() in {
-    "1", "true", "yes"
-}
 
 # --------------------------------------------------------------------------- #
 # Delivery
