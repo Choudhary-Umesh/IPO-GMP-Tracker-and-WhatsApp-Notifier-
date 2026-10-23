@@ -120,6 +120,7 @@ jobs:
       TWILIO_TO:          ${{ secrets.TWILIO_TO }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_EXTRA_CHAT_IDS: ${{ secrets.TELEGRAM_EXTRA_CHAT_IDS }}
       USE_PLAYWRIGHT:        ${{ vars.USE_PLAYWRIGHT || 'false' }}
       IPOWATCH_ENABLED:      ${{ vars.IPOWATCH_ENABLED || 'true' }}
       IPOWATCH_DAILY_LIMIT:  ${{ vars.IPOWATCH_DAILY_LIMIT || '5' }}

@@ -122,6 +122,9 @@ META_GRAPH_VERSION = _env("META_GRAPH_VERSION", "v23.0")
 # Telegram Bot API
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = _env("TELEGRAM_CHAT_ID")
+# More chats (e.g. a friends' group, "-1001234567890"), comma-separated. Every
+# chat in TELEGRAM_CHAT_ID + TELEGRAM_EXTRA_CHAT_IDS receives the alert.
+TELEGRAM_EXTRA_CHAT_IDS = _env("TELEGRAM_EXTRA_CHAT_IDS")
 
 # CallMeBot
 CALLMEBOT_PHONE = _env("CALLMEBOT_PHONE")   # e.g. +919876543210

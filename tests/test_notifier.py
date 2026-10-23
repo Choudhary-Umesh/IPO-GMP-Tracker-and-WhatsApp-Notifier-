@@ -147,3 +147,66 @@ def test_meta_success(monkeypatch):
     monkeypatch.setattr(notifier.requests, "post", post)
     assert notifier.send_whatsapp("hello") == "meta"
     assert seen["url"].endswith("/1111/messages") and seen["auth"] == "Bearer EAAG-token"
+
+
+# ----------------------------------------------------------------- telegram: many chats
+
+
+def telegram_recorder(monkeypatch, replies):
+    """Fake Telegram API. `replies` maps chat_id -> list of FakeResponse to
+    return in order (last one repeats)."""
+    calls = []
+
+    def post(url, json=None, **_):
+        calls.append(json["chat_id"])
+        queue = replies[json["chat_id"]]
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    monkeypatch.setattr(notifier.requests, "post", post)
+    return calls
+
+
+def test_extra_chat_ids_all_receive(monkeypatch):
+    use_telegram(monkeypatch)  # personal chat "42"
+    monkeypatch.setattr(config, "TELEGRAM_EXTRA_CHAT_IDS", "-1001234567890, 42")
+    ok = FakeResponse(200, {"ok": True})
+    calls = telegram_recorder(monkeypatch, {"42": [ok], "-1001234567890": [ok]})
+    assert notifier.telegram_chat_ids() == ["42", "-1001234567890"]  # de-duplicated
+    assert notifier.send_whatsapp("hello") == "telegram"
+    assert calls == ["42", "-1001234567890"]
+
+
+def test_one_chat_failing_does_not_resend_to_the_other(monkeypatch):
+    use_telegram(monkeypatch)
+    monkeypatch.setattr(config, "TELEGRAM_EXTRA_CHAT_IDS", "-100999")
+    calls = telegram_recorder(monkeypatch, {
+        "42": [FakeResponse(200, {"ok": True})],
+        "-100999": [FakeResponse(400, {"ok": False, "description": "chat not found"})],
+    })
+    with pytest.raises(notifier.PartialDelivery) as err:
+        notifier.send_whatsapp("hello")
+    assert err.value.provider == "telegram"
+    assert calls.count("42") == 1 and calls.count("-100999") == 1  # 400 = no retry
+
+
+def test_transient_error_retries_only_that_chat(monkeypatch):
+    use_telegram(monkeypatch)
+    monkeypatch.setattr(config, "TELEGRAM_EXTRA_CHAT_IDS", "-100999")
+    ok = FakeResponse(200, {"ok": True})
+    calls = telegram_recorder(monkeypatch, {
+        "42": [ok], "-100999": [FakeResponse(502, text="bad gateway"), ok]})
+    assert notifier.send_whatsapp("hello") == "telegram"
+    assert calls == ["42", "-100999", "-100999"]
+
+
+def test_upgraded_group_is_followed_to_its_new_id(monkeypatch, caplog):
+    use_telegram(monkeypatch)
+    monkeypatch.setattr(config, "TELEGRAM_CHAT_ID", "-4001")
+    migrated = FakeResponse(400, {"ok": False, "error_code": 400,
+                                  "description": "Bad Request: group chat was upgraded to a supergroup chat",
+                                  "parameters": {"migrate_to_chat_id": -1004001}})
+    calls = telegram_recorder(monkeypatch, {"-4001": [migrated],
+                                            -1004001: [FakeResponse(200, {"ok": True})]})
+    assert notifier.send_whatsapp("hello") == "telegram"
+    assert calls == ["-4001", -1004001]
+    assert "new ID is -1004001" in caplog.text

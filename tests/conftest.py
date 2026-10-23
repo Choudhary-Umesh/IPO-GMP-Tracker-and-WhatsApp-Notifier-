@@ -88,6 +88,7 @@ def isolated(tmp_path, monkeypatch):
     for name in ("META_WA_TOKEN", "META_WA_PHONE_NUMBER_ID", "META_WA_TO", "META_WA_TEMPLATE",
                  "CALLMEBOT_PHONE", "CALLMEBOT_APIKEY", "TWILIO_ACCOUNT_SID",
                  "TWILIO_AUTH_TOKEN", "TWILIO_TO", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+                 "TELEGRAM_EXTRA_CHAT_IDS",
                  "FALLBACK_PROVIDER"):
         monkeypatch.setattr(config, name, "")
     monkeypatch.setattr(config, "WHATSAPP_PROVIDER", "auto")

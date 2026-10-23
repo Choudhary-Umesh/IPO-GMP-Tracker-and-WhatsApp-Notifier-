@@ -209,3 +209,15 @@ def test_ipowatch_limit_note_in_message(monkeypatch, sent, today):
     assert main.main([]) == main.EXIT_OK
     assert "IPO Watch skipped: daily limit of 1 requests reached." in sent[0]
     assert "Alpha Cement Industries Ltd" in sent[0]
+
+
+def test_partial_delivery_still_marks_day_sent(monkeypatch, today):
+    freeze(monkeypatch, "13:31")
+    feed(monkeypatch, today)
+
+    def partial(message, **_):
+        raise notifier.PartialDelivery("telegram", ["chat -100999: chat not found"])
+
+    monkeypatch.setattr(notifier, "send_whatsapp", partial)
+    assert main.main([]) == main.EXIT_FALLBACK
+    assert Path(".state/sent").exists()  # no duplicate from the backup cron

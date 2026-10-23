@@ -21,6 +21,7 @@ CLI can override them.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -49,6 +50,17 @@ class PermanentError(NotifierError):
     """A failure that retrying cannot fix (bad credentials, bad config)."""
 
 
+class PartialDelivery(NotifierError):
+    """Delivered to some recipients (e.g. Telegram chats) but not all.
+    The alert did reach someone, so the day counts as sent; the run is still
+    flagged so the broken recipient gets fixed."""
+
+    def __init__(self, provider: str, failed: list[str]):
+        super().__init__(f"{provider}: delivered, but failed for {len(failed)} recipient(s): "
+                         + " | ".join(failed))
+        self.provider = provider
+
+
 class DeliveredViaFallback(NotifierError):
     """The message reached the user, but only through FALLBACK_PROVIDER.
     Raised (rather than returned) so the run is still marked as failed and the
@@ -72,8 +84,28 @@ def is_configured(provider: str) -> bool:
     if provider == "twilio":
         return bool(cfg.TWILIO_ACCOUNT_SID and cfg.TWILIO_AUTH_TOKEN and cfg.TWILIO_TO)
     if provider == "telegram":
-        return bool(cfg.TELEGRAM_BOT_TOKEN and cfg.TELEGRAM_CHAT_ID)
+        return bool(cfg.TELEGRAM_BOT_TOKEN and telegram_chat_ids())
     return False
+
+
+def telegram_chat_ids() -> list[str]:
+    """TELEGRAM_CHAT_ID plus TELEGRAM_EXTRA_CHAT_IDS, split on commas/spaces, de-duplicated."""
+    ids: list[str] = []
+    for raw in (cfg.TELEGRAM_CHAT_ID, cfg.TELEGRAM_EXTRA_CHAT_IDS):
+        for part in (raw or "").replace(";", ",").replace(" ", ",").split(","):
+            part = part.strip()
+            if part and part not in ids:
+                ids.append(part)
+    return ids
+
+
+def _recipients(provider: str) -> list[Optional[str]]:
+    return list(telegram_chat_ids()) if provider == "telegram" else [None]
+
+
+def _ci_warning(title: str, text: str) -> None:
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        print(f"::warning title={title}::{text}", flush=True)
 
 
 def resolve_provider(requested: Optional[str] = None) -> str:
@@ -104,8 +136,9 @@ def describe_config() -> list[str]:
     """Human-readable provider status for logs. Never prints secret values."""
     lines = []
     for p in AUTO_ORDER:
+        extra = f"  ({len(telegram_chat_ids())} chat(s))" if p == "telegram" and is_configured(p) else ""
         lines.append(f"{p:<10} {'configured' if is_configured(p) else 'missing'}"
-                     f"{'  (WhatsApp)' if p in WHATSAPP_PROVIDERS else ''}")
+                     f"{'  (WhatsApp)' if p in WHATSAPP_PROVIDERS else ''}{extra}")
     try:
         lines.append(f"selected   {resolve_provider()}  (WHATSAPP_PROVIDER={cfg.WHATSAPP_PROVIDER})")
     except NotifierError as exc:
@@ -245,19 +278,34 @@ def _send_twilio(text: str) -> None:
     log.info("Twilio accepted the message (SID %s)", resp.json().get("sid"))
 
 
-def _send_telegram(text: str) -> None:
-    resp = requests.post(
-        TELEGRAM_ENDPOINT.format(token=cfg.TELEGRAM_BOT_TOKEN),
-        json={"chat_id": cfg.TELEGRAM_CHAT_ID, "text": text, "disable_web_page_preview": True},
-        timeout=cfg.HTTP_TIMEOUT,
-    )
-    _raise_for_http("Telegram", resp)
+def _send_telegram(text: str, chat_id: Optional[str] = None) -> None:
+    chat_id = chat_id or (telegram_chat_ids() or [""])[0]
+    url = TELEGRAM_ENDPOINT.format(token=cfg.TELEGRAM_BOT_TOKEN)
+    payload = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+    resp = requests.post(url, json=payload, timeout=cfg.HTTP_TIMEOUT)
+
+    # A basic group that Telegram upgraded to a supergroup gets a new ID; the
+    # old ID answers 400 with the new one. Deliver there and ask for an update.
+    if resp.status_code == 400:
+        try:
+            new_id = (resp.json().get("parameters") or {}).get("migrate_to_chat_id")
+        except ValueError:
+            new_id = None
+        if new_id:
+            msg = (f"Telegram group {chat_id} was upgraded to a supergroup; its new ID is "
+                   f"{new_id}. Update the GitHub secret that holds {chat_id}.")
+            log.warning(msg)
+            _ci_warning("Telegram group ID changed", msg)
+            payload["chat_id"] = new_id
+            resp = requests.post(url, json=payload, timeout=cfg.HTTP_TIMEOUT)
+
+    _raise_for_http(f"Telegram (chat {payload['chat_id']})", resp)
     if not resp.json().get("ok"):
         raise NotifierError(f"Telegram rejected the message: {resp.text[:300]}")
-    log.info("Telegram accepted the message")
+    log.info("Telegram accepted the message for chat %s", payload["chat_id"])
 
 
-_PROVIDERS: dict[str, Callable[[str], None]] = {
+_PROVIDERS: dict[str, Callable[..., None]] = {
     "meta": _send_meta,
     "callmebot": _send_callmebot,
     "twilio": _send_twilio,
@@ -270,24 +318,43 @@ _PROVIDERS: dict[str, Callable[[str], None]] = {
 # --------------------------------------------------------------------------- #
 
 
+def _send_with_retry(send: Callable[..., None], provider: str, text: str,
+                     target: Optional[str], retries: int) -> None:
+    for attempt in range(1, retries + 1):
+        try:
+            send(text, target) if target is not None else send(text)
+            return
+        except PermanentError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - network errors, 5xx, 429
+            log.warning("%s send attempt %s/%s failed: %s", provider, attempt, retries, exc)
+            if attempt == retries:
+                raise NotifierError(f"{provider} failed after {retries} attempts: {exc}") from exc
+            time.sleep(min(5 * 2 ** (attempt - 1), 60))  # 5s, 10s, 20s ...
+
+
 def _deliver(provider: str, message: str, retries: int) -> None:
+    """Send every chunk to every recipient. Each recipient is retried on its
+    own, so a retry never re-sends to a chat that already got the message."""
     send = _PROVIDERS[provider]
     chunks = chunk_message(message)
-    log.info("Sending %s chunk(s) via %s", len(chunks), provider)
-    for i, chunk in enumerate(chunks, start=1):
-        for attempt in range(1, retries + 1):
-            try:
-                send(chunk)
-                break
-            except PermanentError:
+    targets = _recipients(provider)
+    log.info("Sending %s chunk(s) via %s to %s recipient(s)", len(chunks), provider, len(targets))
+    failed: list[str] = []
+    for target in targets:
+        try:
+            for i, chunk in enumerate(chunks, start=1):
+                _send_with_retry(send, provider, chunk, target, retries)
+                if i < len(chunks):
+                    time.sleep(4)  # CallMeBot rate-limits rapid consecutive sends
+        except NotifierError as exc:
+            if len(targets) == 1:
                 raise
-            except Exception as exc:  # noqa: BLE001 - network errors, 5xx, 429
-                log.warning("%s send attempt %s/%s failed: %s", provider, attempt, retries, exc)
-                if attempt == retries:
-                    raise NotifierError(f"Chunk {i}/{len(chunks)} via {provider} failed: {exc}") from exc
-                time.sleep(min(5 * 2 ** (attempt - 1), 60))  # 5s, 10s, 20s ...
-        if i < len(chunks):
-            time.sleep(4)  # CallMeBot rate-limits rapid consecutive sends
+            failed.append(f"chat {target}: {exc}")
+    if failed and len(failed) == len(targets):
+        raise NotifierError(" | ".join(failed))
+    if failed:
+        raise PartialDelivery(provider, failed)
 
 
 def send_whatsapp(
@@ -314,6 +381,8 @@ def send_whatsapp(
         primary = resolve_provider(provider)
         _deliver(primary, message, retries)
         return primary
+    except PartialDelivery:
+        raise
     except NotifierError as exc:
         log.error("Primary delivery failed: %s", exc)
         errors.append(str(exc))

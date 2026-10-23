@@ -17,7 +17,8 @@ Usage:
     python main.py --check-config       # show which providers are configured
     python main.py --alert "text"       # send a one-off alert (used on CI failure)
 
-Exit codes: 0 ok · 1 failed · 3 delivered only via the fallback channel.
+Exit codes: 0 ok · 1 failed · 3 delivered, but only via the fallback channel
+or not to every recipient (e.g. one Telegram chat failed).
 """
 
 from __future__ import annotations
@@ -119,6 +120,10 @@ def deliver(message: str, *, dry_run: bool) -> tuple[int, str]:
         provider = notifier.send_whatsapp(message, dry_run=dry_run)
         gh_output("reported", "true")
         return EXIT_OK, provider
+    except notifier.PartialDelivery as exc:
+        log.error("%s", exc)
+        gh_output("reported", "true")
+        return EXIT_FALLBACK, exc.provider
     except notifier.DeliveredViaFallback as exc:
         log.error("%s", exc)
         gh_output("reported", "true")

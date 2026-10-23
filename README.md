@@ -108,6 +108,26 @@ The sandbox expires every 72 h unless re-joined, so it is poor for automation.
 `FALLBACK_PROVIDER` = `telegram`. If WhatsApp delivery ever fails you still get the
 alert (and the run is marked red so you know to fix WhatsApp).
 
+### Sending to a Telegram group (e.g. friends) as well
+
+Adding the bot to a group is not enough — it only posts to the chat IDs it is given.
+
+1. Add the bot to the group, then send in the group: `/start@<your_bot_username>`
+   (in groups the bot only sees commands and mentions).
+2. Open `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` and find
+   `"chat":{"id":-100…,"title":"<group name>"}`. Group IDs start with a minus sign.
+3. Add a repo **secret** `TELEGRAM_EXTRA_CHAT_IDS` = that ID (several chats:
+   comma-separated). `TELEGRAM_CHAT_ID` (your personal chat) stays as it is; every
+   chat in both secrets gets the alert.
+4. Actions → Daily IPO WhatsApp Alert → Run workflow (tick **force** to resend today).
+
+Adding or removing members never changes a group's ID. It changes only if Telegram
+upgrades a basic group to a supergroup (it does this on its own for some settings
+or large groups). The bot then follows the group to its new ID automatically and
+shows a "Telegram group ID changed" warning on the run with the new ID — update
+`TELEGRAM_EXTRA_CHAT_IDS` with it when you see that. If one chat fails, the other
+chats still get the alert and the run is marked red.
+
 ## Part 2 — Add secrets and variables
 
 Repo → **Settings → Secrets and variables → Actions**.
@@ -191,7 +211,8 @@ Exit codes: `0` ok · `1` failed · `3` delivered only via the fallback channel.
 | Symptom | Check |
 |---|---|
 | `Provider 'telegram' selected but its secrets are missing` | Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets (README Part 1, Telegram). |
-| Telegram `HTTP 400 chat not found` / `403 bot was blocked` | Wrong `TELEGRAM_CHAT_ID`, or you haven't sent your bot a message yet / blocked it. Open the bot and press Start. |
+| Telegram `HTTP 400 chat not found` / `403 bot was blocked` | Wrong `TELEGRAM_CHAT_ID` / `TELEGRAM_EXTRA_CHAT_IDS` (group IDs keep their minus sign), you haven't messaged the bot yet / blocked it, or the bot was removed from the group. |
+| "Telegram group ID changed" warning | The group became a supergroup. The alert still went out; put the new ID from the warning into `TELEGRAM_EXTRA_CHAT_IDS`. |
 | Want WhatsApp instead of Telegram | Add that provider's secrets and set the variable `NOTIFY_PROVIDER`. |
 | No run at 13:30 | cron-job.org job history: 401 = token expired/wrong, 404 = token lacks repo access or wrong URL, 422 = wrong `ref`. |
 | Run says "already sent today" | Dedup. Use **Run workflow → force** to resend. |
